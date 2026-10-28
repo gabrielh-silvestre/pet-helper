@@ -12,3 +12,4 @@ There is no authentication, so a Customer identifies themselves by CPF inside th
 
 - Questions like "where are my orders?" are answered by asking for the order number, never by listing.
 - The CPF is masked in logs and traces like any other personal data.
+- A missing Order and another Customer's Order get the same message to the Customer, so probing order numbers reveals nothing; only the trace records which of the two happened. The order API still answers 404 and refusal distinctly, but the order tool collapses both into one NOT_FOUND result before the model sees it, so the model cannot leak the difference.

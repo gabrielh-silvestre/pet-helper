@@ -24,7 +24,7 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
 7. **Revisão em painel.** No PR aberto; os MINOR vão para uma issue de follow-up que aponta para o PR.
 8. **Merge.** Só o dono faz o merge, como merge commit; o fluxo nunca faz merge sozinho.
 
-O loop de melhoria do agente (evals, métricas e tracing guiando mudanças no assistente) é outro fluxo, definido à parte.
+O loop de melhoria do agente (evals, métricas e tracing guiando mudanças no assistente) está em [loop-melhoria.md](loop-melhoria.md).
 
 ## Branches
 
@@ -59,7 +59,7 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 | CI | A cada push na `main` e em todo PR: o `pre-commit` sobre todos os arquivos, os testes com o piso, as mensagens de commit do PR e dependências não usadas ou faltando; execuções antigas do mesmo PR são canceladas | — |
 
 - Os testes não rodam no `pre-commit`: o vermelho do TDD é commitado de propósito.
-- Teste ou eval que chama o modelo nunca roda em gancho do git nem no CI.
+- Nada que chame o modelo real roda de forma automática: nem gancho do git, nem CI, nem agendamento.
 - O projeto não usa teste de mutação.
 - Gancho local pode ser pulado; o CI é a barreira que não depende da máquina de quem commita.
 
@@ -70,6 +70,7 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 - Bloqueio de atalhos que pulam verificação (`--no-verify` e variáveis que desligam ganchos).
 - Só o dono edita `docs/directives/estrategia.md`.
 - O `executor` não altera os testes do `test-engineer`, nem por ferramenta de edição nem pelo shell.
+- Os agentes que corrigem o assistente não leem os casos de eval reservados.
 
 ### Retorno ao agente
 
