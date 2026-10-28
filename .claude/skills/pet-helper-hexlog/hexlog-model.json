@@ -1,0 +1,479 @@
+{
+  "schema": 1,
+  "project": "pet-helper",
+  "unit": {
+    "kind": "execution (one objective, one branch, one PR)",
+    "location": "docs/specs/<slug>",
+    "examples": [
+      {
+        "path": "docs/specs/feat-order-lookup",
+        "process": "docs-specs-feat-order-lookup"
+      },
+      {
+        "path": "docs/specs/feat-policy-rag",
+        "process": "docs-specs-feat-policy-rag"
+      }
+    ]
+  },
+  "phases": [
+    {
+      "name": "interview",
+      "command": "/oh-my-claudecode:deep-interview --frontier",
+      "type": "interview",
+      "target": "interview",
+      "artifact": "docs/specs/<slug>/spec.md",
+      "links": []
+    },
+    {
+      "name": "plan",
+      "command": "/oh-my-claudecode:ralplan",
+      "type": "plan",
+      "target": "plan",
+      "artifact": "docs/specs/<slug>/plan.md",
+      "links": [
+        {
+          "relation": "plan-derives-from-interview",
+          "to": "interview"
+        }
+      ]
+    },
+    {
+      "name": "architecture",
+      "command": "/owner-seat",
+      "type": "architecture",
+      "target": "architecture",
+      "artifact": "docs/specs/<slug>/architecture.md",
+      "links": [
+        {
+          "relation": "architecture-derives-from-plan",
+          "to": "plan"
+        }
+      ]
+    },
+    {
+      "name": "delivery",
+      "command": "/oh-my-claudecode:ralph",
+      "type": "delivery",
+      "target": "delivery",
+      "artifact": ".omc/prd.json",
+      "links": [
+        {
+          "relation": "delivery-derives-from-architecture",
+          "to": "architecture"
+        }
+      ]
+    },
+    {
+      "name": "local-review",
+      "command": "/review-pr --normal",
+      "type": "local-review",
+      "target": "local-review",
+      "artifact": ".ignore/reviews/",
+      "links": [
+        {
+          "relation": "local-review-derives-from-delivery",
+          "to": "delivery"
+        }
+      ]
+    },
+    {
+      "name": "panel-review",
+      "command": "/review-pr --panel",
+      "type": "panel-review",
+      "target": "panel-review",
+      "artifact": ".ignore/reviews/prs/PR<N>/review.md",
+      "links": [
+        {
+          "relation": "panel-review-derives-from-local-review",
+          "to": "local-review"
+        }
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "interview",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "unit",
+          "summary",
+          "objective"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "plan",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          }
+        },
+        "required": [
+          "unit",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "architecture",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          }
+        },
+        "required": [
+          "unit",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delivery",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          }
+        },
+        "required": [
+          "unit",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "local-review",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          },
+          "findings": {
+            "type": "object",
+            "properties": {
+              "blocking": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "urgent": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "normal": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minor": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "blocking",
+              "urgent",
+              "normal",
+              "minor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "unit",
+          "summary",
+          "findings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "panel-review",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          },
+          "findings": {
+            "type": "object",
+            "properties": {
+              "blocking": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "urgent": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "normal": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minor": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "blocking",
+              "urgent",
+              "normal",
+              "minor"
+            ],
+            "additionalProperties": false
+          },
+          "followUpIssue": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "unit",
+          "summary",
+          "findings"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "relations": [
+    {
+      "name": "plan-derives-from-interview",
+      "kind": "derivesFrom",
+      "from": [
+        "plan"
+      ],
+      "to": [
+        "interview"
+      ]
+    },
+    {
+      "name": "architecture-derives-from-plan",
+      "kind": "derivesFrom",
+      "from": [
+        "architecture"
+      ],
+      "to": [
+        "plan"
+      ]
+    },
+    {
+      "name": "delivery-derives-from-architecture",
+      "kind": "derivesFrom",
+      "from": [
+        "delivery"
+      ],
+      "to": [
+        "architecture"
+      ]
+    },
+    {
+      "name": "local-review-derives-from-delivery",
+      "kind": "derivesFrom",
+      "from": [
+        "local-review"
+      ],
+      "to": [
+        "delivery"
+      ]
+    },
+    {
+      "name": "panel-review-derives-from-local-review",
+      "kind": "derivesFrom",
+      "from": [
+        "panel-review"
+      ],
+      "to": [
+        "local-review"
+      ]
+    }
+  ],
+  "gate": {
+    "name": "unit-complete",
+    "questions": [
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "interview"
+        }
+      },
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "plan"
+        }
+      },
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "architecture"
+        }
+      },
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "delivery"
+        }
+      },
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "local-review"
+        }
+      },
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "panel-review"
+        }
+      },
+      {
+        "kind": "no_pending",
+        "pending": {
+          "type": "interview"
+        },
+        "resolvedBy": {
+          "kind": "derivesFrom",
+          "from": [
+            "plan"
+          ]
+        }
+      },
+      {
+        "kind": "no_pending",
+        "pending": {
+          "type": "plan"
+        },
+        "resolvedBy": {
+          "kind": "derivesFrom",
+          "from": [
+            "architecture"
+          ]
+        }
+      },
+      {
+        "kind": "no_pending",
+        "pending": {
+          "type": "architecture"
+        },
+        "resolvedBy": {
+          "kind": "derivesFrom",
+          "from": [
+            "delivery"
+          ]
+        }
+      },
+      {
+        "kind": "no_pending",
+        "pending": {
+          "type": "delivery"
+        },
+        "resolvedBy": {
+          "kind": "derivesFrom",
+          "from": [
+            "local-review"
+          ]
+        }
+      },
+      {
+        "kind": "no_pending",
+        "pending": {
+          "type": "local-review"
+        },
+        "resolvedBy": {
+          "kind": "derivesFrom",
+          "from": [
+            "panel-review"
+          ]
+        }
+      }
+    ]
+  }
+}
