@@ -49,3 +49,7 @@ fail_under = 80
 [tool.rumdl]
 # prose docs keep one paragraph or rule per line; AGENTS.md opens with the fixed hexlog block
 disable = ["MD013", "MD041"]
+
+[tool.deptry]
+# hook scripts import each other from their own folder
+known_first_party = ["guard", "scripts"]
