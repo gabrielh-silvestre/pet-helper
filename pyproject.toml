@@ -1,0 +1,51 @@
+[project]
+name = "pet-helper"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "deptry>=0.25.1",
+    "prek>=0.5.7",
+    "pyrefly>=1.4.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.3",
+    "rumdl>=0.3.2",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "S"]
+# the formatter owns line length; E501 would only flag long strings and comments
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+# harness scripts shell out to fixed tools on purpose
+".claude/hooks/**" = ["S603", "S607"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: touches the kit or the mock API, no model call",
+    "llm: calls a real model; never runs unless selected explicitly",
+]
+# -m "not llm" keeps every automatic run free of model calls; select them with -m llm
+addopts = ["--strict-markers", "-m", "not llm"]
+
+[tool.coverage.run]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.rumdl]
+# prose docs keep one paragraph or rule per line; AGENTS.md opens with the fixed hexlog block
+disable = ["MD013", "MD041"]

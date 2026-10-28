@@ -8,7 +8,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Take-home challenge: a customer-service assistant (Python, LangGraph) for a fictional pet e-commerce, built and measured over a small synthetic data kit. Delivery deadline: 2026-11-03.
 
-Status: documentation and process only. There is no code yet, so there are no build, lint or test commands. The verification harness is decided in `docs/directives/fluxo-desenvolvimento.md` ("Gate de verificação") but not implemented; do not invent commands before it exists.
+Status: no assistant code yet; the verification harness described in `docs/directives/fluxo-desenvolvimento.md` ("Gate de verificação") is in place.
+
+## Commands
+
+```sh
+uv sync                          # tools pinned in uv.lock, Python 3.12
+uv run prek install              # once per clone: pre-commit, commit-msg and pre-push hooks
+uv run prek run --all-files      # every static check (what CI runs)
+uv run pytest -q --cov           # tests without model calls, 80% branch coverage floor
+uv run pytest tests/harness/test_guard.py::test_it_should_block_hook_bypass   # a single test
+uv run pytest -m llm             # tests that call a real model; never run automatically
+uv run deptry .                  # unused or missing dependencies
+```
+
+Agent hooks live in `.claude/settings.json` and `.claude/hooks/`: autofix lint on every edited `.py`, full verification whenever an `executor` subagent stops (failures go back to it), and a guard that blocks hook bypasses, agent edits to `docs/directives/estrategia.md`, `executor` edits under `tests/`, and any access to `evals/held_out/` unless the session was started with `PET_HELPER_HELD_OUT=1` (the isolated held-out generation flow).
 
 ## Read before working
 

@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Static checks on every file
+        run: uv run prek run --all-files --show-diff-on-failure
+      - name: Tests without model calls, 80% branch coverage
+        run: uv run pytest -q --cov
+      - name: Unused or missing dependencies
+        run: uv run deptry .
+      - name: Commit messages of the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            git log -1 --format=%B "$sha" > /tmp/msg
+            uv run python scripts/check_commit_msg.py /tmp/msg || { echo "commit $sha"; exit 1; }
+          done

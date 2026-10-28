@@ -1,0 +1,55 @@
+# Run by prek (pre-commit compatible). Install once per clone: uv run prek install
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-toml
+      - id: check-yaml
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.6
+    hooks:
+      - id: uv-lock
+
+  # Local hooks run the tool versions pinned in uv.lock
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix --exit-non-zero-on-fix
+        language: system
+        types: [python]
+      - id: pyrefly
+        name: pyrefly
+        entry: uv run pyrefly check
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: rumdl
+        name: rumdl
+        entry: uv run rumdl check
+        language: system
+        types: [markdown]
+      - id: commit-msg
+        name: conventional commit subject only
+        entry: uv run python scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
+      - id: tests
+        name: tests without model calls, 80% branch coverage
+        entry: uv run pytest -q --cov
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

@@ -18,7 +18,7 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
    - Vermelho-verde por behavior: o `test-engineer` escreve os testes do behavior e confirma que falham pelo motivo certo; o `executor` os faz passar com o mínimo de código.
    - O `test-engineer` nunca é o `executor`: quem escreve o código não cria teste.
    - A cada `.py` editado, um hook roda o lint com correção automática e devolve ao agente só o que não corrigiu.
-   - Quando o `executor` fecha a spec, um hook roda a verificação completa (lint, formatação, tipos e a suíte sem modelo com cobertura) antes do `code-simplifier`; falha volta ao `executor` sem contar nas voltas do `code-simplifier`.
+   - Toda vez que o `executor` termina, um hook roda a verificação completa (lint, formatação, tipos e a suíte sem modelo com cobertura) antes do `code-simplifier`; falha volta ao `executor` sem contar nas voltas do `code-simplifier`.
    - O `code-simplifier` roda ao fechar cada spec, quando todos os behaviors dela estão verdes, sobre o código de teste e de produção que entrou.
    - Reprovação do `code-simplifier` volta ao `executor`, os testes rodam de novo e o `code-simplifier` reavalia, no máximo 2 vezes; depois disso o impasse vai ao dono.
    - O loop segue spec a spec até a entrega final.
@@ -69,7 +69,7 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 ### Camada de agentes
 
 - Lint com correção automática a cada `.py` editado.
-- Verificação completa quando o `executor` fecha a spec, antes do `code-simplifier`.
+- Verificação completa toda vez que o `executor` termina, o que inclui o fechamento de cada spec, antes do `code-simplifier`; um hook não enxerga onde a spec termina.
 - Bloqueio de atalhos que pulam verificação (`--no-verify` e variáveis que desligam ganchos).
 - Só o dono edita `docs/directives/estrategia.md`.
 - O `executor` não altera os testes do `test-engineer`, nem por ferramenta de edição nem pelo shell.
