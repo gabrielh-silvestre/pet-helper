@@ -16,7 +16,7 @@ Quem decide o quê neste projeto e como a decisão fica registrada. Vale para a 
 
 - É crítica a escolha que altera, remove ou contraria uma diretriz ou premissa já registrada.
 - Toda escolha crítica vai à cadeira e exige o aval do dono antes de valer.
-- Só o dono emenda uma premissa de `estrategia.md`.
+- Só o dono emenda uma premissa de [estrategia.md](estrategia.md).
 - Regra nova que não altera nenhuma existente é comum.
 
 ## Ocupante
