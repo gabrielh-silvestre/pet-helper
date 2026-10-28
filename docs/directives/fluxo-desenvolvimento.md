@@ -14,6 +14,8 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
 4. **Entrega em loop de TDD.**
    - Vermelho-verde por behavior: o `test-engineer` escreve os testes do behavior e confirma que falham pelo motivo certo; o `executor` os faz passar com o mínimo de código.
    - O `test-engineer` nunca é o `executor`: quem escreve o código não cria teste.
+   - A cada `.py` editado, um hook roda o lint com correção automática e devolve ao agente só o que não corrigiu.
+   - Quando o `executor` fecha a spec, um hook roda a verificação completa (lint, formatação, tipos e a suíte sem modelo com cobertura) antes do `code-simplifier`; falha volta ao `executor` sem contar nas voltas do `code-simplifier`.
    - O `code-simplifier` roda ao fechar cada spec, quando todos os behaviors dela estão verdes, sobre o código de teste e de produção que entrou.
    - Reprovação do `code-simplifier` volta ao `executor`, os testes rodam de novo e o `code-simplifier` reavalia, no máximo 2 vezes; depois disso o impasse vai ao dono.
    - O loop segue spec a spec até a entrega final.
@@ -45,4 +47,34 @@ O loop de melhoria do agente (evals, métricas e tracing guiando mudanças no as
 
 ## Gate de verificação
 
-As camadas do gate (formatação, lint, testes, mutação) e seus comandos são definidos na entrevista do harness.
+Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta por hook, nunca só por texto.
+
+### Camada compartilhada
+
+| Momento | O que roda | Teto |
+|---|---|---|
+| `pre-commit` | Só estático, sobre o que está em stage: formatação, lint e regras de segurança, checagem de tipos do projeto, lint de markdown, higiene de arquivos (fim de linha, espaços, TOML e YAML válidos) e lockfile do uv coerente | ~10 s |
+| `commit-msg` | Conventional Commits, subject de até 80 caracteres, sem corpo | — |
+| `pre-push` | A cada push: testes unitários e de integração sem modelo, com piso de 80% de cobertura em branches | ~60 s |
+| CI | A cada push na `main` e em todo PR: o `pre-commit` sobre todos os arquivos, os testes com o piso, as mensagens de commit do PR e dependências não usadas ou faltando; execuções antigas do mesmo PR são canceladas | — |
+
+- Os testes não rodam no `pre-commit`: o vermelho do TDD é commitado de propósito.
+- Teste ou eval que chama o modelo nunca roda em gancho do git nem no CI.
+- O projeto não usa teste de mutação.
+- Gancho local pode ser pulado; o CI é a barreira que não depende da máquina de quem commita.
+
+### Camada de agentes
+
+- Lint com correção automática a cada `.py` editado.
+- Verificação completa quando o `executor` fecha a spec, antes do `code-simplifier`.
+- Bloqueio de atalhos que pulam verificação (`--no-verify` e variáveis que desligam ganchos).
+- Só o dono edita `docs/directives/estrategia.md`.
+- O `executor` não altera os testes do `test-engineer`, nem por ferramenta de edição nem pelo shell.
+
+### Retorno ao agente
+
+| Situação | O que o agente recebe |
+|---|---|
+| Sucesso | Nada |
+| Falha | Só os erros, `arquivo:linha: problema. Como corrigir`, até 20, com a contagem do restante |
+| Bloqueio | Uma frase com o motivo e o caminho permitido |
