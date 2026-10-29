@@ -30,7 +30,7 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 - `docs/requisitos.md`: the challenge rewritten as requirements (kit, assistant behavior, business rules RN01-RN04, deliverables). The original statement is confidential and stays in the gitignored `.ignore/`; never commit it or copy it.
 - `GLOSSARY.md`: the domain language (Customer, Session Customer, Order, Return, Escalation Reason...). Use these names in code; the Portuguese term next to each entry is the customer-facing word.
 - `docs/directives/estrategia.md`: the owner's premises. Only the owner edits this file.
-- `docs/directives/cadeira-do-dono.md`: who decides what. Product and strategy go to the owner; architecture goes to the owner-seat critic (`opus`, the only subagent exception); code-level choices are decided by the executor and recorded, not asked.
+- `docs/directives/cadeira-do-dono.md`: who decides what. Product and strategy go to the owner; architecture goes to the owner-seat critic (`opus`, the only subagent exception; one durable session per unit in a Herdr tab, `agy` only on request via `/owner-seat <slug> --critic agy`); code-level choices are decided by the executor and recorded, not asked.
 - `docs/directives/fluxo-desenvolvimento.md`: the 8-step flow grouped into three macros, git hooks, CI and agent hooks.
 - `docs/directives/loop-melhoria.md`: the eval-driven improvement loop.
 - `docs/adr/`: decisions that must not be re-litigated without revisiting the ADR.

@@ -615,5 +615,26 @@
         }
       }
     ]
+  },
+  "ownerSeat": {
+    "names": {
+      "type_gap": "gap",
+      "type_premise": "premise",
+      "type_evidence": "evidence",
+      "type_audit": "audit",
+      "relation_fills_gap": "fills-gap",
+      "relation_audits": "audits",
+      "gate_gaps": "gaps"
+    },
+    "applied": {
+      "type_gap": "1.0",
+      "type_premise": "1.0",
+      "type_evidence": "1.0",
+      "type_audit": "1.0",
+      "relation_fills_gap": "1.0",
+      "relation_audits": "1.0",
+      "gate_gaps": "1.0"
+    },
+    "occupant": "claude"
   }
 }

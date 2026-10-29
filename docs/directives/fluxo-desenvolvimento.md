@@ -30,7 +30,7 @@ As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do 
    - O planner refaz a pesquisa pontual sobre o que o plano vai construir; toda peça escrita do zero diz no plano qual ferramenta existente foi considerada e por que não serve.
    - O `ralplan` para no plano aprovado e nunca segue para `team` nem `ralph`: a etapa seguinte é sempre a cadeira do dono.
    - O plano de trabalho fica em `.omc/plans/`; uma cópia passada pelo `/humanizar` vai para `docs/specs/<slug>/plan.md`.
-3. **Cadeira do dono.** Por `/owner-seat`: o critic decide a arquitetura que o plano exige e a registra em `docs/specs/<slug>/architecture.md`; o dono dá o aval no fim da M1, junto com o plano.
+3. **Cadeira do dono.** Por `/owner-seat`: o critic durável, numa tab do Herdr, decide a arquitetura que o plano exige e a registra em `docs/specs/<slug>/architecture.md` e no hexlog (`gap`, `premise`, `evidence`); o dono dá o aval no fim da M1, junto com o plano, e o critic vive até o fim da M3. As regras estão em [cadeira-do-dono.md](cadeira-do-dono.md).
 4. **Entrega em loop de TDD.** Por `/oh-my-claudecode:ralph`, com as regras abaixo injetadas nas instruções dele.
    - Vermelho-verde por behavior: o `test-engineer` escreve os testes do behavior e confirma que falham pelo motivo certo; o `executor` os faz passar com o mínimo de código.
    - O `test-engineer` nunca é o `executor`: quem escreve o código não cria teste.

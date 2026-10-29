@@ -16,7 +16,7 @@ Runs step 7 of [fluxo-desenvolvimento.md](../../../docs/directives/fluxo-desenvo
 - Before every hexlog record, `F set phase <phase>`, then run `pet-helper-hexlog` passing that phase by name.
 - Invoke skills with the Skill tool, naming the next skill only in the Skill call.
 - TDD split: the `test-engineer` writes and changes tests, the `executor` writes production code (`test-standards` / `code-standards` first). Subagents `sonnet`/`haiku`, named from `AGENT-NAMES.md`.
-- Product decision: launch the owner-seat critic (`oh-my-claudecode:critic`, `model: "opus"`) with the finding, its investigation, `docs/directives/estrategia.md` and `docs/requisitos.md`; apply its choice and log it in `.ignore/reviews/<slug>/decisions.md` with `origin: simulated`.
+- Product decision: ask the unit's owner-seat critic, as in steps 2 to 6 of [owner-seat.md](../../commands/owner-seat.md): reuse the one in `critic.md` or launch it, and send the finding, its investigation, `docs/directives/estrategia.md` and `docs/requisitos.md`; apply its choice and log it in `.ignore/reviews/<slug>/decisions.md` with `origin: simulated` and the hexlog id of its `premise`. A fix that would alter or contradict a directive, premise or ADR is critical: the owner decides it.
 - Impasse (a step fails twice, the same hook block repeats, the critic cannot decide): record an `impasse` (phase, reason, what is done) without changing the state phase, stop and leave this tab open. The owner resumes in this tab.
 
 ## Steps
@@ -27,4 +27,4 @@ Runs step 7 of [fluxo-desenvolvimento.md](../../../docs/directives/fluxo-desenvo
 4. **Commit.** In the worktree: `git add -A`, one `fix:` commit with every correction, push. Read the pushed `git rev-parse HEAD`.
 5. **Verdict.** Invoke `pr-verdict` with `<PR> --auto --head <sha>`. It posts the verdict pinned to that SHA and opens the MINOR follow-up issue.
 6. **Record.** Record the `panel-review` phase with the mode and its reason from `R/.ignore/reviews/<slug>/mode.md`, the finding counts and the decisions file as `product_decisions`; then close the unit with the `unit-complete` gate through `pet-helper-hexlog`.
-7. **Close.** `F clear`, then `herdr tab close "$HERDR_TAB_ID"`.
+7. **Close.** Shut the critic down as in the Shutdown section of [owner-seat.md](../../commands/owner-seat.md) when `critic.md` exists. Then `F clear`, then `herdr tab close "$HERDR_TAB_ID"`.

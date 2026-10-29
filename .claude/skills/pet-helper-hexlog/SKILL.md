@@ -38,6 +38,27 @@ skill and read the file when you open a unit, register a phase or close the unit
    "Fechar a unidade". Treat `hexlog-model.json` as read-only data; change it by running
    the `hexlog-setup` skill again.
 
+## Owner seat
+
+The roles, the answer format and the audit are in [owner-seat/contract.md](owner-seat/contract.md); the rules the occupant decides by, in [owner-seat/criteria.md](owner-seat/criteria.md); the class of a question, the action catalog and the approval, in `docs/directives/cadeira-do-dono.md`. Names: `gap`, `premise`, `evidence`, `audit`, `fills-gap`, `audits`, gate `gaps`. The occupant is the durable critic that [owner-seat.md](../../commands/owner-seat.md) launches in a Herdr tab; this project has no `recipe-*.md`.
+
+When you hit a gap you cannot close alone (a question no rule of the project answers):
+
+1. Record the gap: type `gap`, target `<process>.gap.<short>`, with the `Class:` and `Nature:` literal at the start of `context`.
+2. Check the seat precondition as the contract says in "Before sitting" (the trace fields of `premise` in the process). A process opened before the owner seat was set up does not have them, and then nobody sits: go to step 4.
+3. Ask the critic as `owner-seat.md` says (steps 4 to 6) and read the answer back with `query` (`relatedTo` the gap id) before going on.
+4. If the critic fails, if the precondition does not hold or if nobody sits, ask the developer and record the answer with `answeredBy: human`, as the contract says. With no developer available (headless session), leave the gap open. In a process opened before the owner seat was set up, the gap type and `answeredBy` are not pinned: record only what the pinned types accept, or keep it outside hexlog.
+
+Audit report, to run when the developer asks for it and also when you close the unit or open the PR (needs the `HEXLOG_CHECKOUT` variable, set once per developer to the hexlog checkout):
+
+```text
+node "$HEXLOG_CHECKOUT/scripts/seat-report.ts" pet-helper --types gap=gap,premise=premise,audit=audit
+```
+
+Before running it, check that `$HEXLOG_CHECKOUT/scripts/seat-report.ts` and `$HEXLOG_CHECKOUT/node_modules` exist and that `node --version` satisfies `^24.18.1` (24.x series, 24.18.1 or newer; Node 25 and later are out of range). If the variable is unset or a check fails, ask the developer; do not guess a path. The report lists `simulated-approved` answers under "answers with an unrecognized answeredBy": that is expected here.
+
+When you close a unit, evaluate the gate `gaps` in addition to the unit gate `unit-complete`: it fails while a gap has no answer.
+
 ## If something fails
 
 - The process or project is missing in hexlog (the model may be out of date or applied to

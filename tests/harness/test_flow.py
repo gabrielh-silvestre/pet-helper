@@ -26,6 +26,7 @@ INITIAL_STATE = {
     "approved": False,
     "worktree": "",
     "owner": "",
+    "critic": "",
 }
 PLAN_WITH_TOOLS = "# Plan\n\n## Ferramentas existentes\n\nbm25s\n"
 OMC_SPEC = ".omc/specs/deep-interview-cats.md"
@@ -166,7 +167,7 @@ def test_it_should_keep_the_state_when_started_again_with_the_same_slug(repo):
 # set
 
 
-@pytest.mark.parametrize("key", ["phase", "worktree", "owner"])
+@pytest.mark.parametrize("key", ["phase", "worktree", "owner", "critic"])
 def test_it_should_set_only_the_given_key(repo, key):
     state = _write_state(repo)
 
@@ -353,6 +354,15 @@ def test_it_should_allow_registering_records_of_the_current_phase_or_impasse(
     assert _guard("phase", _register(*types), repo).returncode == 0
 
 
+@pytest.mark.parametrize("seat_type", ["gap", "premise", "evidence", "audit"])
+def test_it_should_allow_registering_owner_seat_records_in_any_phase(repo, seat_type):
+    _write_state(repo, phase="architecture")
+
+    result = _guard("phase", _register(seat_type, "architecture"), repo)
+
+    assert result.returncode == 0
+
+
 @pytest.mark.parametrize(
     "types", [("review",), ("plan", "review")], ids=["only", "mixed"]
 )
@@ -442,6 +452,36 @@ def test_it_should_allow_everything_until_both_owner_and_worktree_are_set(
     result = _guard("owner", _owner(file_path=f"{worktree}/src/app.py"), repo)
 
     assert result.returncode == 0
+
+
+def test_it_should_allow_the_critic_session_into_the_owned_worktree(repo, worktree):
+    _write_state(repo, worktree=str(worktree), owner="sess-A", critic="sess-critic")
+
+    result = _guard(
+        "owner",
+        _owner(session="sess-critic", file_path=f"{worktree}/src/app.py"),
+        repo,
+    )
+
+    assert result.returncode == 0
+
+
+def test_it_should_still_deny_other_sessions_when_a_critic_is_set(repo, worktree):
+    _write_state(repo, worktree=str(worktree), owner="sess-A", critic="sess-critic")
+
+    result = _guard("owner", _owner(file_path=f"{worktree}/src/app.py"), repo)
+
+    assert result.returncode == 2
+
+
+def test_it_should_not_treat_a_missing_session_as_the_unset_critic(repo, worktree):
+    _write_state(repo, worktree=str(worktree), owner="sess-A", critic="")
+
+    result = _guard(
+        "owner", {"tool_input": {"file_path": f"{worktree}/src/app.py"}}, repo
+    )
+
+    assert result.returncode == 2
 
 
 def test_it_should_allow_any_call_on_owner_when_no_unit_is_in_flight(repo, worktree):

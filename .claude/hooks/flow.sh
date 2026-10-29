@@ -20,12 +20,12 @@ cmd_start() {
     [ "$(field slug)" = "$1" ] && return 0
     fail "unit $(field slug) is in flight; finish it or run flow.sh clear"
   fi
-  jq -n --arg s "$1" '{slug: $s, phase: "interview", approved: false, worktree: "", owner: ""}' >"$f"
+  jq -n --arg s "$1" '{slug: $s, phase: "interview", approved: false, worktree: "", owner: "", critic: ""}' >"$f"
 }
 
 cmd_set() {
   [ -f "$f" ] || fail "no unit in flight; run flow.sh start <slug>"
-  case ${1:-} in phase | worktree | owner) ;; *) fail "unknown key: ${1:-}" ;; esac
+  case ${1:-} in phase | worktree | owner | critic) ;; *) fail "unknown key: ${1:-}" ;; esac
   jq --arg k "$1" --arg v "${2:-}" '.[$k] = $v' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
 }
 
@@ -58,18 +58,19 @@ cmd_approve() {
   jq '.approved = true' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
 }
 
-# R1: hexlog only takes the phase the macro declared, or an impasse.
+# R1: hexlog only takes the phase the macro declared, an impasse or an owner-seat record.
 guard_phase() {
   bad=$(printf '%s' "$payload" | jq -r --arg p "$(field phase)" \
-    '[.tool_input.records[]?.type | select(. != $p and . != "impasse")] | first // empty')
+    '[.tool_input.records[]?.type | select(. != $p and . != "impasse" and (IN("gap", "premise", "evidence", "audit") | not))] | first // empty')
   [ -z "$bad" ] || deny "hexlog phase is $(field phase), set by the macro with flow.sh set phase; got $bad"
 }
 
-# R2: after the hand-off only the /pr-panel session writes the worktree.
+# R2: after the hand-off only the /pr-panel session (and the owner-seat critic) writes the worktree.
 guard_owner() {
   printf '%s' "$payload" | jq -e --slurpfile s "$f" '
     $s[0] as $st | $st.worktree as $w
-    | if $st.owner == "" or $w == "" or .session_id == $st.owner then false
+    | if $st.owner == "" or $w == "" or .session_id == $st.owner
+         or (($st.critic // "") != "" and .session_id == $st.critic) then false
       else ([.tool_input.file_path, .tool_input.notebook_path, .cwd] | map(strings)
             | any(. == $w or startswith($w + "/")))
            or ((.tool_input.command // "") | tostring | contains($w))
