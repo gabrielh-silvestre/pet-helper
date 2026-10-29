@@ -1,12 +1,33 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(*--no-verify*)",
+      "Bash(git commit -n *)",
+      "Bash(git commit * -n *)",
+      "Bash(git commit * -n)",
+      "Bash(*SKIP=*)",
+      "Bash(*PRE_COMMIT_ALLOW_NO_CONFIG=*)",
+      "Bash(*core.hooksPath*)",
+      "Edit(/docs/directives/estrategia.md)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); h=\"$CLAUDE_PROJECT_DIR/.claude/hooks\"; [ \"$(printf '%s' \"$p\" | jq -r -f \"$h/role.jq\")\" = executor ] && printf '%s' \"$p\" | jq -e -f \"$h/writes-tests.jq\" >/dev/null && { echo 'The executor does not edit tests; ask the test-engineer to change them.' >&2; exit 2; }; exit 0"
+          }
+        ]
+      },
       {
         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
+            "command": "[ \"$PET_HELPER_HELD_OUT\" = 1 ] || ! jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/held-out.jq\" >/dev/null || { echo 'Held-out eval cases are hidden from agents that change the assistant; run them only through the accept/reject step.' >&2; exit 2; }"
           }
         ]
       }
@@ -17,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint_on_edit.py\""
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.py) ;; *) exit 0;; esac; uv run --quiet prek run ruff-format ruff-check --files \"$f\" >/dev/null 2>&1 || out=$(uv run --quiet prek run ruff-format ruff-check --files \"$f\" 2>&1) || { printf '%s\\n' \"$out\" | tail -20 >&2; exit 2; }"
           }
         ]
       }
@@ -27,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify_on_executor_stop.py\"",
+            "command": "[ \"$(jq -r -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/role.jq\")\" = executor ] || exit 0; out=$(uv run --quiet prek run --all-files 2>&1 && uv run --quiet prek run --all-files --stage pre-push 2>&1) || { printf '%s\\n' \"$out\" | tail -25 >&2; exit 2; }",
             "timeout": 300
           }
         ]

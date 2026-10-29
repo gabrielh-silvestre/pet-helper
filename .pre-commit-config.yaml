@@ -43,7 +43,8 @@ repos:
         types: [markdown]
       - id: commit-msg
         name: conventional commit subject only
-        entry: uv run python scripts/check_commit_msg.py
+        # the subject limit only applies through -l; the config key covers cz commit alone
+        entry: uv run cz check -l 80 --commit-msg-file
         language: system
         stages: [commit-msg]
       - id: tests

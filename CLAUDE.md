@@ -16,13 +16,14 @@ Status: no assistant code yet; the verification harness described in `docs/direc
 uv sync                          # tools pinned in uv.lock, Python 3.12
 uv run prek install              # once per clone: pre-commit, commit-msg and pre-push hooks
 uv run prek run --all-files      # every static check (what CI runs)
-uv run pytest -q --cov           # tests without model calls, 80% branch coverage floor
-uv run pytest tests/harness/test_guard.py::test_it_should_block_hook_bypass   # a single test
+uv run pytest -q --cov           # tests without model calls, 80% branch coverage floor on src/
+uv run pytest tests/harness/test_hooks.py::test_it_should_allow_paths_outside_the_held_out_cases   # a single test
+uv run cz check --rev-range main..HEAD -l 80   # commit messages (commitizen, config in pyproject.toml)
 uv run pytest -m llm             # tests that call a real model; never run automatically
 uv run deptry .                  # unused or missing dependencies
 ```
 
-Agent hooks live in `.claude/settings.json` and `.claude/hooks/`: autofix lint on every edited `.py`, full verification whenever an `executor` subagent stops (failures go back to it), and a guard that blocks hook bypasses, agent edits to `docs/directives/estrategia.md`, `executor` edits under `tests/`, and any access to `evals/held_out/` unless the session was started with `PET_HELPER_HELD_OUT=1` (the isolated held-out generation flow).
+Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules block git hook bypasses and edits to `docs/directives/estrategia.md`. Hooks (jq filters in `.claude/hooks/`, tested by `tests/harness/test_hooks.py`) block `executor` edits under `tests/` and any access to `evals/held_out/` unless the session was started with `PET_HELPER_HELD_OUT=1` (the isolated held-out generation flow), autofix lint through the prek ruff hooks on every edited `.py`, and run prek on all files plus the pre-push stage whenever an `executor` subagent stops (failures go back to it).
 
 ## Read before working
 

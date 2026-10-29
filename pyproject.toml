@@ -6,6 +6,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "commitizen>=4.19.3",
     "deptry>=0.25.1",
     "prek>=0.5.7",
     "pyrefly>=1.4.0",
@@ -25,9 +26,8 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
-# harness scripts shell out to fixed tools on purpose
-".claude/hooks/**" = ["S603", "S607"]
-"scripts/**" = ["S603", "S607"]
+# harness tests run the hook commands through sh on purpose
+"tests/harness/**" = ["S603", "S607"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -40,6 +40,8 @@ markers = [
 addopts = ["--strict-markers", "-m", "not llm"]
 
 [tool.coverage.run]
+# the floor measures product code only; an empty package counts as 100% until code lands
+source = ["src"]
 branch = true
 omit = ["tests/*"]
 
@@ -50,6 +52,11 @@ fail_under = 80
 # prose docs keep one paragraph or rule per line; AGENTS.md opens with the fixed hexlog block
 disable = ["MD013", "MD041"]
 
-[tool.deptry]
-# hook scripts import each other from their own folder
-known_first_party = ["guard", "scripts"]
+[tool.commitizen]
+name = "cz_customize"
+# no prefix (Merge, Revert, fixup!) skips the check
+allowed_prefixes = []
+
+[tool.commitizen.customize]
+# matched from the start only: the trailing $ is what rejects a body
+schema_pattern = '(feat|fix|chore|docs|test|refactor)(\([a-z0-9-]+\))?!?: \S[^\n]*\n?$'
