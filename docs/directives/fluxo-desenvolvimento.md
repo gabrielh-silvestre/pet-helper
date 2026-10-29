@@ -10,7 +10,9 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
    - Cada execução tem um único objetivo.
    - Cada behavior do assistente sai também como caso de eval: entrada, saída esperada e forma de medir.
    - Pergunta de arquitetura vai ao critic da cadeira; pergunta de código fica com o planner e o executor.
+   - Pesquisa de ferramentas existentes, para escrever do zero só o mínimo: pontual quando a unidade usa bibliotecas que a [architecture.md](../architecture.md) já escolheu (conferir o que elas já entregam pronto); ampla quando a unidade traz uma capacidade sem biblioteca escolhida. O agente decide qual das duas e diz por quê; o achado entra na spec.
 2. **Planejamento autônomo.** Por `/oh-my-claudecode:ralplan`.
+   - O planner refaz a pesquisa pontual sobre o que o plano vai construir; toda peça escrita do zero diz no plano qual ferramenta existente foi considerada e por que não serve.
    - O `ralplan` para no plano aprovado e nunca segue para `team` nem `ralph`: a etapa seguinte é sempre a cadeira do dono.
    - O plano de trabalho fica em `.omc/plans/`; uma cópia passada pelo `/humanizar` vai para `docs/specs/<slug>/plan.md`.
 3. **Cadeira do dono.** Por `/owner-seat`: o critic decide a arquitetura que o plano exige e a registra em `docs/specs/<slug>/architecture.md`; o dono dá o aval no pré-PR.

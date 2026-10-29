@@ -45,6 +45,7 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 ## Working rules
 
 - Phase commands, in order: `/oh-my-claudecode:deep-interview --frontier` (spec, humanized copy in `docs/specs/<slug>/spec.md`), `/oh-my-claudecode:ralplan` (stops at the approved plan, never hands off to `team` or `ralph`), `/owner-seat`, `/oh-my-claudecode:ralph` (delivery, TDD loop), `/review-pr --normal` on the worktree, `/review-pr --panel` in a fresh Herdr tab.
+- Existing tools before custom code: every interview and plan runs a research step on existing libraries, targeted (what the libraries already chosen in `docs/architecture.md` ship) or broad (a capability with no chosen library); the agent picks which and says why. Every piece built from scratch names in the plan the existing tool considered and why it does not fit.
 - TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them.
 - Nothing that calls the real model runs automatically (no git hook, CI or schedule). Eval rounds are manual, show a cost estimate first and stop at US$5.
 - Commit directly on `main` while the work is docs and setup; once code delivery starts, one branch and one `wt` worktree per unit, a PR, and only the owner merges.
