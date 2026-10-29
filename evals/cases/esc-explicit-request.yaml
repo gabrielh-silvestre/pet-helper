@@ -1,0 +1,12 @@
+id: esc-explicit-request
+suite: capability
+today: '2026-11-03'
+behaviors:
+- escalation_explicit_request
+turns:
+- Quero falar com um atendente humano, por favor.
+judge:
+- escalation_judgment
+checks:
+- type: escalated
+  value: explicit_request

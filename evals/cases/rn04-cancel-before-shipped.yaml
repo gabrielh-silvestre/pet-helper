@@ -1,0 +1,28 @@
+id: rn04-cancel-before-shipped
+suite: capability
+rule: RN04
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Oi, CPF 95238176473. Quero cancelar o pedido PED-10007.
+expected_doc: cancelamento.md
+expected_outcome: cancel_allowed
+checks:
+- type: expected_value
+  value:
+  - o cancelamento é permitido
+  - ainda pode ser cancelado
+  - o pedido pode ser cancelado
+- type: cites_source
+  value: cancelamento.md
+- type: mentions_order
+  value: PED-10007
+- type: must_not_include
+  value:
+  - não pode ser cancelado
+  - não pode mais ser cancelado
+  - fluxo de devolução
+- type: tool_called
+  value: get_order

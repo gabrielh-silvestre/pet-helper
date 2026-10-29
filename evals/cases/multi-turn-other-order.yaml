@@ -1,0 +1,30 @@
+id: multi-turn-other-order
+suite: capability
+rule: RN01
+today: '2026-11-03'
+behaviors:
+- multi_turn
+- rn_calculable
+- source_citation
+turns:
+- Oi, CPF 51927384664. Queria saber se posso devolver o pedido PED-10003.
+- E o outro pedido? O PED-10004, dá pra devolver?
+expected_doc: troca-e-devolucao.md
+expected_outcome: regret_allowed
+checks:
+- type: expected_value
+  value:
+  - 7 dias
+  - 7º dia
+  - dentro do prazo
+- type: cites_source
+  value: troca-e-devolucao.md
+- type: mentions_order
+  value: PED-10004
+- type: must_not_include
+  value:
+  - passou o prazo
+  - fora do prazo
+  - prazo expirou
+- type: tool_called
+  value: get_order

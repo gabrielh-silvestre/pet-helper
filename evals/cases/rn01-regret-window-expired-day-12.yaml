@@ -1,0 +1,30 @@
+id: rn01-regret-window-expired-day-12
+suite: capability
+rule: RN01
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Oi, CPF 736.108.254-80. Quero devolver a cama PX-0041 do pedido PED-10005, ela está lacrada na caixa, só me arrependi da compra. Dá para devolver?
+expected_doc: troca-e-devolucao.md
+expected_outcome: regret_denied
+checks:
+- type: expected_value
+  value:
+  - prazo de 7 dias já passou
+  - prazo de 7 dias terminou
+  - além dos 7 dias
+- type: cites_source
+  value: troca-e-devolucao.md
+- type: mentions_order
+  value: PED-10005
+- type: must_not_include
+  value:
+  - devolução aprovada
+  - aceitamos a devolução
+- type: must_include
+  value:
+  - defeito
+- type: tool_called
+  value: get_order

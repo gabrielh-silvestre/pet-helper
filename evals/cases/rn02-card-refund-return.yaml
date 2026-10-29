@@ -1,0 +1,27 @@
+id: rn02-card-refund-return
+suite: capability
+rule: RN02
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Oi, meu CPF é 284.615.937-82. Me arrependi do pedido PED-10001 e vou devolver. Como o dinheiro volta para mim?
+expected_doc: reembolso.md
+expected_outcome: refund_card_2_invoices
+checks:
+- type: expected_value
+  value:
+  - estorno em até 2 faturas
+  - até 2 faturas
+  - estorno no cartão em até 2 faturas
+  - mesmo cartão em até 2 faturas
+- type: cites_source
+  value: reembolso.md
+- type: mentions_order
+  value: PED-10001
+- type: must_not_include
+  value:
+  - 5 dias úteis
+- type: tool_called
+  value: get_order

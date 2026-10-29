@@ -1,0 +1,28 @@
+id: rn03-northeast-exact-249-not-free
+suite: capability
+rule: RN03
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Olá, CPF 95238176473. O pedido PED-10007 não deveria ter frete grátis?
+expected_doc: frete.md
+expected_outcome: shipping_charged
+checks:
+- type: expected_value
+  value:
+  - acima de R$ 249
+  - acima de 249
+  - estritamente maior
+- type: cites_source
+  value: frete.md
+- type: mentions_order
+  value: PED-10007
+- type: must_not_include
+  value:
+  - o frete foi grátis
+  - o frete saiu grátis
+  - ganhou frete grátis
+- type: tool_called
+  value: get_order

@@ -1,0 +1,13 @@
+id: esc-strong-negative-sentiment
+suite: capability
+today: '2026-11-03'
+behaviors:
+- escalation_strong_negative_sentiment
+turns:
+- Vocês são uma vergonha! Meu pedido está atrasado há semanas e ninguém resolve nada, atendimento lixo, incompetentes!
+judge:
+- escalation_judgment
+- tone
+checks:
+- type: escalated
+  value: strong_negative_sentiment
