@@ -1,0 +1,14 @@
+id: policy-privacy-retention
+suite: capability
+today: '2026-11-03'
+behaviors:
+- source_citation
+turns:
+- Por quanto tempo a petx guarda os dados dos meus pedidos?
+expected_doc: privacidade-e-dados-pessoais.md
+checks:
+- type: cites_source
+  value: privacidade-e-dados-pessoais.md
+- type: expected_value
+  value:
+  - 5 anos

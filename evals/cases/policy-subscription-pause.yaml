@@ -1,0 +1,15 @@
+id: policy-subscription-pause
+suite: capability
+today: '2026-11-03'
+behaviors:
+- source_citation
+turns:
+- Tenho uma assinatura de ração e vou viajar. Posso pausar as entregas? Por quanto tempo?
+expected_doc: assinatura.md
+checks:
+- type: cites_source
+  value: assinatura.md
+- type: expected_value
+  value:
+  - até 60 dias
+  - 60 dias corridos

@@ -5,7 +5,7 @@ Status: aprovado em 29/10/2026. A entrevista foi em 29/10/2026 e terminou com am
 ## Objetivo
 
 É o kit de dados sintético que o desafio pede na seção "Kit" da [requisitos.md](../../requisitos.md), montado para a loja fictícia **petx**. Ele traz 8 políticas que refletem RN01 a RN04 sem contradição e inventam as demais regras, de 8 a 10 pedidos, a API mock de pedidos, um catálogo de 40 a 60 SKUs, o script de validação, o `PROMPTS.md` e o `KIT.md` com a revisão crítica.
-Junto com o kit sai a suíte normal de eval, com 20 a 25 casos YAML. Cada armadilha do kit e cada comportamento do assistente pedido no desafio ganha pelo menos um caso, conforme a premissa `comportamento-nasce-como-eval`.
+Junto com o kit sai a suíte normal de eval, com 30 casos YAML. Cada armadilha do kit e cada comportamento do assistente pedido no desafio ganha pelo menos um caso, conforme a premissa `comportamento-nasce-como-eval`.
 
 ## Decisões da entrevista
 
@@ -15,14 +15,14 @@ Junto com o kit sai a suíte normal de eval, com 20 a 25 casos YAML. Cada armadi
 - Os temas que ficam de fora de propósito são **garantia estendida** e **programa de fidelidade**. Nenhuma política os cobre, nem de passagem.
 - A revisão crítica tem três etapas: um subagente critic audita a coerência com RN01 a RN04 e a cobertura das armadilhas, o script valida e o dono confirma. O `KIT.md` registra o que cada etapa encontrou e o que foi corrigido.
 - O script de validação roda só por comando, fora do prek e da CI.
-- Os CPFs têm dígitos verificadores válidos, já que a validação do CPF decide se ele vincula o Session Customer ([architecture.md](../../architecture.md) §2). A falsidade aparece nos nomes, nos e-mails e no registro do `KIT.md`.
+- Os CPFs têm dígitos verificadores válidos, já que a validação do CPF decide se ele vincula o Session Customer ([architecture.md](../../architecture.md) §2), e usam a faixa `000.000.00x`, improvável de coincidir com CPF real. A falsidade aparece também nos nomes, nos e-mails e no registro do `KIT.md`.
 
 ## O que entra
 
 - As políticas em `kit/policies/`, os pedidos em `kit/orders.json` e o catálogo em `kit/catalog.csv`.
 - O adaptador `MockOrderApi`, atrás do port `OrderApi` do módulo `orders`, conforme desenhado na [architecture.md](../../architecture.md) §4.
 - O script de validação, o `kit/PROMPTS.md` e o `kit/KIT.md`.
-- De 20 a 25 casos em `evals/cases/`.
+- 30 casos em `evals/cases/`.
 
 Lembrando que algumas decisões já estão tomadas e valem aqui também: o id da fonte é o nome do arquivo e o título é o primeiro H1, o SKU tem prefixo fixo, as tools devolvem fatos e não veredito ([ADR 0002](../../adr/0002-business-rules-in-policies-facts-from-tools.md)), e o acesso a um pedido exige o CPF e o número juntos, com a API recusando pedido de outro cliente ([ADR 0001](../../adr/0001-order-access-by-cpf-and-order-number.md)). Nada nesta unidade chama o modelo real. Código e chaves ficam em inglês, já o texto voltado ao cliente (políticas, descrições e falas dos casos) fica em pt-BR.
 
@@ -30,7 +30,7 @@ Lembrando que algumas decisões já estão tomadas e valem aqui também: o id da
 
 - `OrderService`, `Catalog`, `PolicyIndex`, as tools, o guard e o harness de eval no Inspect. Esta unidade escreve os dados e o `MockOrderApi`, nada que os consuma.
 - Rodar a suíte de eval, já que os casos são só dados até o harness existir.
-- Os cerca de 5 casos reservados, que saem depois num fluxo isolado com `PET_HELPER_HELD_OUT=1` e completam a suíte em 25 a 30 casos.
+- Os cerca de 5 casos reservados, que saem depois num fluxo isolado com `PET_HELPER_HELD_OUT=1` e levam a suíte a cerca de 35 casos, acima do teto de 30 do desafio. O dono enxuga depois.
 - Validação automática do kit em hook ou CI.
 
 ## Critério de aceite

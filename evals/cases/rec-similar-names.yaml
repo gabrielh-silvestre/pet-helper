@@ -1,0 +1,14 @@
+id: rec-similar-names
+suite: capability
+today: '2026-11-03'
+behaviors:
+- recommendation_similar_names
+- recommendation
+turns:
+- Queria a ração Bigodin de salmão para castrados, pode me passar?
+checks:
+- type: skus_exist
+- type: must_include
+  value:
+  - 3 kg
+  - 10 kg

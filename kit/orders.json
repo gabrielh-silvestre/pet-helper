@@ -1,0 +1,222 @@
+{
+  "reference_date": "2026-11-03",
+  "customers": [
+    {
+      "cpf": "00000000191",
+      "name": "Tobias Pimpão Fictício",
+      "email": "tobias.pimpao@clientes.example.com"
+    },
+    {
+      "cpf": "00000000272",
+      "name": "Zuleica Bigodes Imaginária",
+      "email": "zuleica.bigodes@clientes.example.com"
+    },
+    {
+      "cpf": "00000000353",
+      "name": "Osvaldo Focinho Inventado",
+      "email": "osvaldo.focinho@clientes.example.com"
+    },
+    {
+      "cpf": "00000000434",
+      "name": "Marilu Patinhas de Mentira",
+      "email": "marilu.patinhas@clientes.example.com"
+    }
+  ],
+  "orders": [
+    {
+      "number": "PED-10001",
+      "customer_cpf": "00000000191",
+      "status": "Entregue",
+      "delivered_on": "2026-10-31",
+      "region": "Sul",
+      "state": "SC",
+      "total": "159.80",
+      "payment_method": "Cartão",
+      "items": [
+        {
+          "sku": "PX-0037",
+          "quantity": 1,
+          "unit_price": "89.90",
+          "category": "acessório",
+          "opened": false
+        },
+        {
+          "sku": "PX-0038",
+          "quantity": 1,
+          "unit_price": "69.90",
+          "category": "acessório",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10002",
+      "customer_cpf": "00000000191",
+      "status": "Em separação",
+      "delivered_on": null,
+      "region": "Sul",
+      "state": "SC",
+      "total": "149.00",
+      "payment_method": "Pix",
+      "items": [
+        {
+          "sku": "PX-0043",
+          "quantity": 1,
+          "unit_price": "149.00",
+          "category": "acessório",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10003",
+      "customer_cpf": "00000000272",
+      "status": "Entregue",
+      "delivered_on": "2026-11-01",
+      "region": "Sudeste",
+      "state": "SP",
+      "total": "94.80",
+      "payment_method": "Pix",
+      "items": [
+        {
+          "sku": "PX-0001",
+          "quantity": 1,
+          "unit_price": "62.90",
+          "category": "ração",
+          "opened": true
+        },
+        {
+          "sku": "PX-0027",
+          "quantity": 1,
+          "unit_price": "31.90",
+          "category": "brinquedo",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10004",
+      "customer_cpf": "00000000272",
+      "status": "Entregue",
+      "delivered_on": "2026-10-27",
+      "region": "Sudeste",
+      "state": "SP",
+      "total": "106.70",
+      "payment_method": "Cartão",
+      "items": [
+        {
+          "sku": "PX-0021",
+          "quantity": 2,
+          "unit_price": "34.90",
+          "category": "brinquedo",
+          "opened": false
+        },
+        {
+          "sku": "PX-0039",
+          "quantity": 1,
+          "unit_price": "36.90",
+          "category": "acessório",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10005",
+      "customer_cpf": "00000000353",
+      "status": "Entregue",
+      "delivered_on": "2026-10-22",
+      "region": "Centro-Oeste",
+      "state": "GO",
+      "total": "164.80",
+      "payment_method": "Cartão",
+      "items": [
+        {
+          "sku": "PX-0020",
+          "quantity": 1,
+          "unit_price": "54.90",
+          "category": "areia",
+          "opened": true
+        },
+        {
+          "sku": "PX-0041",
+          "quantity": 1,
+          "unit_price": "109.90",
+          "category": "acessório",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10006",
+      "customer_cpf": "00000000353",
+      "status": "Enviado",
+      "delivered_on": null,
+      "region": "Centro-Oeste",
+      "state": "GO",
+      "total": "249.80",
+      "discount": 25.0,
+      "payment_method": "Pix",
+      "items": [
+        {
+          "sku": "PX-0004",
+          "quantity": 1,
+          "unit_price": "129.90",
+          "category": "ração",
+          "opened": false
+        },
+        {
+          "sku": "PX-0011",
+          "quantity": 1,
+          "unit_price": "119.90",
+          "category": "ração",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10007",
+      "customer_cpf": "00000000434",
+      "status": "Pago",
+      "delivered_on": null,
+      "region": "Nordeste",
+      "state": "BA",
+      "total": "249.00",
+      "payment_method": "Cartão",
+      "items": [
+        {
+          "sku": "PX-0008",
+          "quantity": 1,
+          "unit_price": "249.00",
+          "category": "ração",
+          "opened": false
+        }
+      ]
+    },
+    {
+      "number": "PED-10008",
+      "customer_cpf": "00000000434",
+      "status": "Cancelado",
+      "delivered_on": null,
+      "region": "Nordeste",
+      "state": "BA",
+      "total": "61.70",
+      "payment_method": "Pix",
+      "items": [
+        {
+          "sku": "PX-0013",
+          "quantity": 2,
+          "unit_price": "19.90",
+          "category": "areia",
+          "opened": false
+        },
+        {
+          "sku": "PX-0045",
+          "quantity": 1,
+          "unit_price": "21.90",
+          "category": "acessório",
+          "opened": false
+        }
+      ]
+    }
+  ]
+}

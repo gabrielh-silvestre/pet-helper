@@ -1,0 +1,13 @@
+id: missing-order-number
+suite: capability
+today: '2026-11-03'
+behaviors:
+- missing_order_number
+turns:
+- Meu CPF é 000.000.002-72. Cadê meu pedido?
+checks:
+- type: tool_not_called
+  value: get_order
+- type: must_include
+  value:
+  - número do pedido

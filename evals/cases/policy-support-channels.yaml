@@ -1,0 +1,16 @@
+id: policy-support-channels
+suite: capability
+today: '2026-11-03'
+behaviors:
+- source_citation
+turns:
+- Qual o horário de atendimento de vocês no WhatsApp?
+expected_doc: canais-e-horarios.md
+checks:
+- type: cites_source
+  value: canais-e-horarios.md
+- type: expected_value
+  value:
+  - das 8h às 18h
+  - 8h às 18h
+  - 8h até as 18h

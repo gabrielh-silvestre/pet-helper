@@ -847,6 +847,8 @@ source = { editable = "." }
 dependencies = [
     { name = "langchain-core" },
     { name = "langgraph" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -865,6 +867,8 @@ dev = [
 requires-dist = [
     { name = "langchain-core", specifier = ">=1.7.1" },
     { name = "langgraph", specifier = ">=1.2.18" },
+    { name = "pydantic", specifier = ">=2.14.1" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [package.metadata.requires-dev]

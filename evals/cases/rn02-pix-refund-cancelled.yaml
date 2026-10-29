@@ -1,0 +1,25 @@
+id: rn02-pix-refund-cancelled
+suite: capability
+rule: RN02
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Boa tarde! CPF 000.000.004-34. Cancelei o pedido PED-10008 e queria saber quando o dinheiro volta.
+expected_doc: reembolso.md
+expected_outcome: refund_pix_5_business_days
+checks:
+- type: expected_value
+  value:
+  - Pix em até 5 dias úteis
+  - 5 dias úteis
+- type: cites_source
+  value: reembolso.md
+- type: mentions_order
+  value: PED-10008
+- type: must_not_include
+  value:
+  - 2 faturas
+- type: tool_called
+  value: get_order

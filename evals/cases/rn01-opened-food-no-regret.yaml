@@ -1,0 +1,27 @@
+id: rn01-opened-food-no-regret
+suite: capability
+rule: RN01
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Meu CPF é 000.000.002-72. Quero devolver a ração PX-0001 do pedido PED-10003, meu gato não gostou. Eu já abri o pacote.
+expected_doc: troca-e-devolucao.md
+expected_outcome: regret_denied
+checks:
+- type: expected_value
+  value:
+  - só por defeito
+  - somente em caso de defeito
+  - só são trocadas em caso de defeito
+- type: cites_source
+  value: troca-e-devolucao.md
+- type: mentions_order
+  value: PED-10003
+- type: must_not_include
+  value:
+  - devolução aprovada
+  - aceitamos a devolução
+- type: tool_called
+  value: get_order

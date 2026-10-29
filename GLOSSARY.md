@@ -40,6 +40,10 @@ _Avoid_: return type, cause
 Money given back to the Customer, always through the original payment method.
 _Avoid_: reimbursement, chargeback, cashback
 
+**Payment Method** _(forma de pagamento)_:
+How an Order was paid, exactly one of: Pix _(Pix)_ or Card _(Cartão)_; it decides the Refund deadline.
+_Avoid_: payment type, gateway
+
 **Region** _(região)_:
 The Brazilian region of an Order's delivery address: South _(Sul)_, Southeast _(Sudeste)_, Center-West _(Centro-Oeste)_, Northeast _(Nordeste)_ or North _(Norte)_.
 _Avoid_: area, zone, state
@@ -57,6 +61,10 @@ _Avoid_: item, goods, merchandise
 **SKU**:
 The code that identifies one Product; only SKUs that exist in the catalog may be mentioned.
 _Avoid_: product id, code
+
+**Category** _(categoria)_:
+The kind of a Product, exactly one of: Food _(ração)_, Litter _(areia)_, Toy _(brinquedo)_ or Accessory _(acessório)_; opened Food or Litter is accepted for return only for Defect.
+_Avoid_: type, department, product line
 
 **Species** _(espécie)_:
 The animal a Product is meant for: Dog _(cão)_, Cat _(gato)_ or Both _(ambos)_; a Both Product fits either.

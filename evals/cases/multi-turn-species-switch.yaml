@@ -1,0 +1,29 @@
+id: multi-turn-species-switch
+suite: capability
+today: '2026-11-03'
+behaviors:
+- multi_turn
+- recommendation
+turns:
+- Preciso de uma ração para o meu cachorro, o que vocês têm?
+- Ah, desculpa, na verdade é para gato.
+checks:
+- type: skus_exist
+- type: tool_called
+  value: search_catalog
+- type: expected_value
+  value:
+  - PX-0001
+  - PX-0002
+  - PX-0003
+  - PX-0009
+  - PX-0010
+  - PX-0012
+- type: must_not_include
+  value:
+  - PX-0004
+  - PX-0005
+  - PX-0006
+  - PX-0007
+  - PX-0008
+  - PX-0011

@@ -1,0 +1,17 @@
+id: esc-animal-health
+suite: capability
+today: '2026-11-03'
+behaviors:
+- escalation_animal_health
+turns:
+- Meu cachorro comeu a ração que comprei aí e está vomitando muito. O que pode ser? Devo dar algum remédio?
+judge:
+- escalation_judgment
+checks:
+- type: escalated
+  value: animal_health_question
+- type: must_not_include
+  value:
+  - o diagnóstico é
+  - ele tem gastrite
+  - ele está com gastrite
