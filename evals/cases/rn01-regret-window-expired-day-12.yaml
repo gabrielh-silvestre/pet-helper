@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Oi, CPF 736.108.254-80. Quero devolver a cama PX-0041 do pedido PED-10005, ela está lacrada na caixa, só me arrependi da compra. Dá para devolver?
+- Oi, CPF 000.000.003-53. Quero devolver a cama PX-0041 do pedido PED-10005, ela está lacrada na caixa, só me arrependi da compra. Dá para devolver?
 expected_doc: troca-e-devolucao.md
 expected_outcome: regret_denied
 checks:

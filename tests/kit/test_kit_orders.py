@@ -1,18 +1,24 @@
 import re
 from collections import Counter
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
-from pet_helper.orders.api import FAILURE_503_ORDER, FAILURE_TIMEOUT_ORDER, MockOrderApi
+from pet_helper.orders.api import (
+    FAILURE_503_ORDER,
+    FAILURE_ENV,
+    FAILURE_TIMEOUT_ORDER,
+    MockOrderApi,
+)
 from pet_helper.orders.cpf import is_valid_cpf, normalize_cpf
+from tests.kit.helpers import FOOD_AND_LITTER, prompts_section
 
 pytestmark = pytest.mark.integration
 
 REFERENCE_DATE = date(2026, 11, 3)
 STATUSES = {"Pago", "Em separação", "Enviado", "Entregue", "Cancelado"}
 SOUTH_SOUTHEAST = {"Sul", "Sudeste"}
-FOOD_AND_LITTER = {"ração", "areia"}
 UF_BY_REGION = {
     "Sul": {"PR", "SC", "RS"},
     "Sudeste": {"SP", "RJ", "MG", "ES"},
@@ -83,7 +89,9 @@ ANSWERS = [
     pytest.param(
         "PED-10006", "RN04", None, False, "cancel_denied_return_flow", id="O6-cancel"
     ),
-    pytest.param("PED-10006", "RN03", None, False, "free_shipping", id="O6-shipping"),
+    pytest.param(
+        "PED-10006", "RN03", None, False, "shipping_charged", id="O6-shipping"
+    ),
     pytest.param(
         "PED-10007", "RN03", None, False, "shipping_charged", id="O7-shipping"
     ),
@@ -96,7 +104,7 @@ ANSWERS = [
 
 @pytest.fixture(autouse=True)
 def _no_ambient_api_failure(monkeypatch):
-    monkeypatch.delenv("PET_HELPER_ORDER_API_FAILURE", raising=False)
+    monkeypatch.delenv(FAILURE_ENV, raising=False)
 
 
 @pytest.fixture
@@ -297,11 +305,39 @@ def test_it_should_total_each_order_as_the_sum_of_its_items(order_book):
 
 
 def totals_where(order_book, in_south_southeast, keep):
+    # gross total (sum of the items); the discount is pinned in the discount tests
     return [
         o.total
         for o in order_book.orders
         if (o.region in SOUTH_SOUTHEAST) == in_south_southeast and keep(o.total)
     ]
+
+
+def discounted_orders(order_book):
+    return [order for order in order_book.orders if order.discount > 0]
+
+
+def test_it_should_give_exactly_one_order_a_discount(order_book):
+    discounted = [order.number for order in discounted_orders(order_book)]
+
+    assert len(discounted) == 1
+
+
+def test_it_should_change_the_shipping_verdict_of_the_discounted_order(
+    order_book, oracle
+):
+    order = discounted_orders(order_book)[0]
+    undiscounted = order.model_copy(update={"discount": Decimal("0")})
+
+    verdicts = (oracle("RN03", order), oracle("RN03", undiscounted))
+
+    assert verdicts[0] != verdicts[1]
+
+
+def test_it_should_keep_every_discount_below_the_order_total(order_book):
+    excessive = [o.number for o in order_book.orders if o.discount >= o.total]
+
+    assert excessive == []
 
 
 def test_it_should_have_a_south_or_southeast_total_above_149(order_book):
@@ -425,6 +461,23 @@ def test_it_should_answer_404_for_an_order_number_that_does_not_exist(order_book
 # fictional people
 
 
+SLOT_CUSTOMER_CPFS = ["00000000191", "00000000272", "00000000353", "00000000434"]
+
+
+def test_it_should_give_the_slot_customers_the_reserved_fake_cpfs_in_order(order_book):
+    cpfs = [customer.cpf for customer in order_book.customers[:4]]
+
+    assert cpfs == SLOT_CUSTOMER_CPFS
+
+
+def test_it_should_keep_every_customer_cpf_in_the_reserved_zero_prefix_range(
+    order_book,
+):
+    outside = [c.cpf for c in order_book.customers if not c.cpf.startswith("000000")]
+
+    assert outside == []
+
+
 def test_it_should_use_valid_cpfs_for_every_customer(order_book):
     invalid = [c.cpf for c in order_book.customers if not is_valid_cpf(c.cpf)]
 
@@ -447,11 +500,10 @@ def test_it_should_use_only_example_com_emails(order_book):
 
 
 @pytest.fixture
-def orders_prompt(kit_dir):
-    text = (kit_dir / "PROMPTS.md").read_text(encoding="utf-8")
-    section = re.search(r"^## Pedidos\n(.*?)(?=^## |\Z)", text, re.S | re.M)
-    assert section, "PROMPTS.md has no '## Pedidos' section"
-    block = re.search(r"^(`{3,})[^\n]*\n(.*?)^\1[ \t]*$", section.group(1), re.S | re.M)
+def orders_prompt():
+    block = re.search(
+        r"^(`{3,})[^\n]*\n(.*?)^\1[ \t]*$", prompts_section("Pedidos"), re.S | re.M
+    )
     assert block, "'## Pedidos' has no fenced prompt block"
     return block.group(2)
 

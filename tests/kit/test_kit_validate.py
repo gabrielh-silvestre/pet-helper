@@ -9,9 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.kit.helpers import KIT_DIR
+
 pytestmark = pytest.mark.integration
 
-VALIDATE_PATH = Path(__file__).resolve().parents[2] / "kit" / "validate.py"
+VALIDATE_PATH = KIT_DIR / "validate.py"
 
 
 @pytest.fixture(scope="module")
@@ -224,3 +226,162 @@ def test_it_should_fail_when_an_order_sku_is_missing_from_the_catalog(
     assert not flagged(intact_failures, "orders", r"PX-9999 not in the catalog")
     assert flagged(failures, "orders", r"PX-9999 not in the catalog")
     assert exit_code == 1
+
+
+def test_it_should_fail_when_a_delivered_order_has_no_delivery_date(
+    validate_module, kit
+):
+    def edit(data):
+        del data["orders"][0]["delivered_on"]
+
+    edit_orders(kit, edit)
+
+    failures = validate_module.validate(kit)
+
+    assert flagged(failures, "orders", r"PED-10001 is Entregue without delivered_on")
+
+
+def test_it_should_suggest_delivered_on_when_the_field_is_misspelled(
+    validate_module, kit
+):
+    def edit(data):
+        order = data["orders"][0]
+        order["delivered_one"] = order.pop("delivered_on")
+
+    edit_orders(kit, edit)
+
+    failures = validate_module.validate(kit)
+
+    assert flagged(failures, "orders", r"'delivered_one'.*did you mean 'delivered_on'")
+
+
+def test_it_should_suggest_opened_when_the_item_field_is_misspelled(
+    validate_module, kit
+):
+    def edit(data):
+        item = data["orders"][0]["items"][0]
+        item["opend"] = item.pop("opened")
+
+    edit_orders(kit, edit)
+
+    failures = validate_module.validate(kit)
+
+    assert flagged(failures, "orders", r"'opend'.*did you mean 'opened'")
+
+
+def test_it_should_accept_a_legitimate_extra_order_field(validate_module, kit):
+    def edit(data):
+        data["orders"][0]["gift_note"] = "wrap it"
+
+    edit_orders(kit, edit)
+
+    failures = validate_module.validate(kit)
+
+    assert failures == []
+
+
+def test_it_should_accept_the_intact_kit(intact_failures):
+    assert intact_failures == []
+
+
+def test_it_should_exit_zero_for_the_intact_kit(validate_module, kit):
+    exit_code = validate_module.main([str(kit)])
+
+    assert exit_code == 0
+
+
+def test_it_should_accept_the_default_kit_directory(validate_module):
+    failures = validate_module.validate()
+
+    assert failures == []
+
+
+def test_it_should_exit_zero_for_the_default_kit_directory(validate_module):
+    exit_code = validate_module.main([])
+
+    assert exit_code == 0
+
+
+def add_policies(count):
+    def edit(kit):
+        sources = sorted((kit / "policies").glob("*.md"))
+        for i, source in enumerate(sources[:count]):
+            shutil.copy(source, kit / "policies" / f"extra-{i}.md")
+
+    return edit
+
+
+def policy_with_words(count):
+    return lambda kit: first_policy(kit).write_text(with_words(count), encoding="utf-8")
+
+
+def catalog_of_size(size):
+    def edit(kit):
+        data = json.loads((kit / "orders.json").read_text(encoding="utf-8"))
+        used = {item["sku"] for order in data["orders"] for item in order["items"]}
+
+        def resize(header, rows):
+            # produtos citados por pedidos ficam, senão o corte vira "not in the catalog"
+            kept = sorted(rows, key=lambda row: row[0] not in used)[:size]
+            return header, padded_to(kept, size)
+
+        edit_catalog(kit, resize)
+
+    return edit
+
+
+def orders_of_size(size):
+    return lambda kit: edit_orders(kit, resized_orders(size))
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        add_policies(2),
+        policy_with_words(150),
+        policy_with_words(400),
+        catalog_of_size(40),
+        catalog_of_size(60),
+        orders_of_size(10),
+    ],
+    ids=[
+        "10-policies",
+        "150-words",
+        "400-words",
+        "40-products",
+        "60-products",
+        "10-orders",
+    ],
+)
+def test_it_should_accept_a_kit_at_the_edge_of_an_allowed_range(
+    validate_module, kit, edit
+):
+    edit(kit)
+
+    failures = validate_module.validate(kit)
+
+    assert failures == []
+
+
+def test_it_should_fail_when_the_catalog_is_missing(validate_module, kit):
+    (kit / "catalog.csv").unlink()
+
+    failures = validate_module.validate(kit)
+
+    assert flagged(failures, "catalog", r"header is not")
+
+
+def test_it_should_fail_when_the_catalog_is_empty(validate_module, kit):
+    (kit / "catalog.csv").write_text("", encoding="utf-8")
+
+    failures = validate_module.validate(kit)
+
+    assert flagged(failures, "catalog", r"header is not")
+
+
+def test_it_should_fail_when_the_orders_file_is_missing(validate_module, kit):
+    (kit / "orders.json").unlink()
+
+    failures = validate_module.validate(kit)
+
+    assert flagged(failures, "orders", r"order count 0, expected")

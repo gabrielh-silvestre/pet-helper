@@ -1,8 +1,10 @@
 import re
 
+_CPF_FORMAT = re.compile(r"\d{3}\.?\d{3}\.?\d{3}-?\d{2}", re.ASCII)
+
 
 def normalize_cpf(text: str) -> str:
-    return re.sub(r"\D", "", text)
+    return re.sub(r"\D", "", text) if _CPF_FORMAT.fullmatch(text) else ""
 
 
 def _check_digit(digits: str) -> int:

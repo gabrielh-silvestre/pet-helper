@@ -2,22 +2,22 @@
   "reference_date": "2026-11-03",
   "customers": [
     {
-      "cpf": "28461593782",
+      "cpf": "00000000191",
       "name": "Tobias Pimpão Fictício",
       "email": "tobias.pimpao@clientes.example.com"
     },
     {
-      "cpf": "51927384664",
+      "cpf": "00000000272",
       "name": "Zuleica Bigodes Imaginária",
       "email": "zuleica.bigodes@clientes.example.com"
     },
     {
-      "cpf": "73610825480",
+      "cpf": "00000000353",
       "name": "Osvaldo Focinho Inventado",
       "email": "osvaldo.focinho@clientes.example.com"
     },
     {
-      "cpf": "95238176473",
+      "cpf": "00000000434",
       "name": "Marilu Patinhas de Mentira",
       "email": "marilu.patinhas@clientes.example.com"
     }
@@ -25,7 +25,7 @@
   "orders": [
     {
       "number": "PED-10001",
-      "customer_cpf": "28461593782",
+      "customer_cpf": "00000000191",
       "status": "Entregue",
       "delivered_on": "2026-10-31",
       "region": "Sul",
@@ -51,7 +51,7 @@
     },
     {
       "number": "PED-10002",
-      "customer_cpf": "28461593782",
+      "customer_cpf": "00000000191",
       "status": "Em separação",
       "delivered_on": null,
       "region": "Sul",
@@ -70,7 +70,7 @@
     },
     {
       "number": "PED-10003",
-      "customer_cpf": "51927384664",
+      "customer_cpf": "00000000272",
       "status": "Entregue",
       "delivered_on": "2026-11-01",
       "region": "Sudeste",
@@ -96,7 +96,7 @@
     },
     {
       "number": "PED-10004",
-      "customer_cpf": "51927384664",
+      "customer_cpf": "00000000272",
       "status": "Entregue",
       "delivered_on": "2026-10-27",
       "region": "Sudeste",
@@ -122,7 +122,7 @@
     },
     {
       "number": "PED-10005",
-      "customer_cpf": "73610825480",
+      "customer_cpf": "00000000353",
       "status": "Entregue",
       "delivered_on": "2026-10-22",
       "region": "Centro-Oeste",
@@ -148,12 +148,13 @@
     },
     {
       "number": "PED-10006",
-      "customer_cpf": "73610825480",
+      "customer_cpf": "00000000353",
       "status": "Enviado",
       "delivered_on": null,
       "region": "Centro-Oeste",
       "state": "GO",
       "total": "249.80",
+      "discount": 25.0,
       "payment_method": "Pix",
       "items": [
         {
@@ -174,7 +175,7 @@
     },
     {
       "number": "PED-10007",
-      "customer_cpf": "95238176473",
+      "customer_cpf": "00000000434",
       "status": "Pago",
       "delivered_on": null,
       "region": "Nordeste",
@@ -193,7 +194,7 @@
     },
     {
       "number": "PED-10008",
-      "customer_cpf": "95238176473",
+      "customer_cpf": "00000000434",
       "status": "Cancelado",
       "delivered_on": null,
       "region": "Nordeste",

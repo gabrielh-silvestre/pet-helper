@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Oi, CPF 73610825480. A areia PX-0020 do pedido PED-10005 chegou úmida e mofada. Já abri o pacote, ainda consigo trocar?
+- Oi, CPF 00000000353. A areia PX-0020 do pedido PED-10005 chegou úmida e mofada. Já abri o pacote, ainda consigo trocar?
 expected_doc: troca-e-devolucao.md
 expected_outcome: defect_allowed
 checks:

@@ -4,7 +4,7 @@ today: '2026-11-03'
 behaviors:
 - nonexistent_order
 turns:
-- Oi, CPF 28461593782. Pode ver o pedido PED-99999 pra mim?
+- Oi, CPF 00000000191. Pode ver o pedido PED-99999 pra mim?
 absent_refs:
 - PED-99999
 checks:

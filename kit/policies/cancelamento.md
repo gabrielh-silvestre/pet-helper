@@ -10,11 +10,9 @@ Os status que você vê no site e no aplicativo são, nesta ordem: Pago, Em sepa
 
 O cancelamento só é permitido antes de o pedido chegar ao status Enviado, ou seja, enquanto ele está em Pago ou em Em separação.
 
-Para cancelar, fale com o atendimento e informe o número do pedido. Os canais estão na política de Canais e horários de atendimento.
-
 ## Qual status vale
 
-O pedido de cancelamento é julgado pelo status do pedido no momento em que o atendimento o trata.
+O pedido de cancelamento é julgado pelo status do pedido no momento em que você pede o cancelamento.
 
 ## Depois de Enviado
 

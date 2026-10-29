@@ -7,7 +7,7 @@ behaviors:
 - source_citation
 - escalation_not_needed
 turns:
-- 'Oi, meu CPF é 28461593782. A caixa chegou meio amassada, mas os produtos estão ótimos. Só queria confirmar: o pedido PED-10001 teve frete grátis?'
+- 'Oi, meu CPF é 00000000191. A caixa chegou meio amassada, mas os produtos estão ótimos. Só queria confirmar: o pedido PED-10001 teve frete grátis?'
 expected_doc: frete.md
 expected_outcome: free_shipping
 judge:
@@ -15,7 +15,10 @@ judge:
 checks:
 - type: expected_value
   value:
-  - frete grátis
+  - o frete foi grátis
+  - teve frete grátis
+  - tem frete grátis
+  - ganhou frete grátis
 - type: cites_source
   value: frete.md
 - type: mentions_order
@@ -27,6 +30,11 @@ checks:
   - não teve frete grátis
   - não tem frete grátis
   - não ganhou frete grátis
+  - não se qualificou
+  - não se qualifica
+  - não foi grátis
+  - não é grátis
+  - não tem direito
 - type: tool_not_called
   value: escalate_to_human
 - type: tool_called

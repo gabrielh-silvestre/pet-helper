@@ -1,0 +1,15 @@
+id: policy-store-pickup
+suite: capability
+today: '2026-11-03'
+behaviors:
+- source_citation
+turns:
+- Posso retirar meu pedido em uma loja física? Depois que avisarem que está pronto, quanto tempo eu tenho para ir buscar?
+expected_doc: retirada-em-loja.md
+checks:
+- type: cites_source
+  value: retirada-em-loja.md
+- type: expected_value
+  value:
+  - 5 dias corridos
+  - 5 dias

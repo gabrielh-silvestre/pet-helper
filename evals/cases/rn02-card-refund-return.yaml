@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Oi, meu CPF é 284.615.937-82. Me arrependi do pedido PED-10001 e vou devolver. Como o dinheiro volta para mim?
+- Oi, meu CPF é 000.000.001-91. Me arrependi do pedido PED-10001 e vou devolver. Como o dinheiro volta para mim?
 expected_doc: reembolso.md
 expected_outcome: refund_card_2_invoices
 checks:

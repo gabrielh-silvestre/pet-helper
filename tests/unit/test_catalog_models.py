@@ -3,6 +3,7 @@ import unicodedata
 from decimal import Decimal
 
 import pytest
+
 from pet_helper.catalog.models import SKU_PATTERN, Product, load_products
 
 HEADER = "SKU,nome,categoria,espécie,preço,estoque,descrição"

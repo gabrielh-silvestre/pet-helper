@@ -36,6 +36,7 @@ def build_order(items=None, **overrides):
         "region": "Sul",
         "payment_method": "Pix",
         "total": Decimal("50.00"),
+        "discount": Decimal("0"),
         "items": items if items is not None else [item()],
     }
     return SimpleNamespace(**{**fields, **overrides})
@@ -79,12 +80,21 @@ def test_it_should_allow_regret_for_a_cited_item_that_was_not_opened(oracle):
     assert outcome == "regret_allowed"
 
 
-def test_it_should_deny_whole_order_regret_when_any_item_is_opened(oracle):
+def test_it_should_fail_whole_order_regret_when_any_item_is_opened(oracle):
     order = delivered(2, [item("PX-0002", "areia", opened=True), item("PX-0003")])
 
-    outcome = oracle("RN01", order, family="regret")
+    with pytest.raises(KIND_FAILURE):
+        oracle("RN01", order, family="regret")
 
-    assert outcome == "regret_denied"
+
+def test_it_should_allow_regret_for_a_cited_opened_item_outside_food_and_litter(
+    oracle,
+):
+    order = delivered(2, [item("PX-0003", "brinquedo", opened=True)])
+
+    outcome = oracle("RN01", order, sku="PX-0003", family="regret")
+
+    assert outcome == "regret_allowed"
 
 
 def test_it_should_allow_whole_order_regret_when_nothing_is_opened(oracle):
@@ -177,6 +187,27 @@ def test_it_should_charge_shipping_unless_the_total_is_above_the_regional_floor(
     oracle, region, total, expected
 ):
     order = build_order(region=region, total=Decimal(total))
+
+    outcome = oracle("RN03", order)
+
+    assert outcome == expected
+
+
+@pytest.mark.parametrize(
+    ("region", "total", "discount", "expected"),
+    [
+        ("Sul", "159.80", "10.79", "free_shipping"),
+        ("Sul", "159.80", "10.80", "shipping_charged"),
+        ("Sul", "159.80", "20.00", "shipping_charged"),
+        ("Centro-Oeste", "249.80", "25.00", "shipping_charged"),
+        ("Nordeste", "249.80", "0.80", "shipping_charged"),
+        ("Nordeste", "249.80", "0.79", "free_shipping"),
+    ],
+)
+def test_it_should_apply_the_discount_before_comparing_with_the_regional_floor(
+    oracle, region, total, discount, expected
+):
+    order = build_order(region=region, total=Decimal(total), discount=Decimal(discount))
 
     outcome = oracle("RN03", order)
 

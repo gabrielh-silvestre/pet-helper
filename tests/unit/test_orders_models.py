@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+
 from pet_helper.catalog.models import SKU_PATTERN
 from pet_helper.orders.models import (
     ORDER_NUMBER_PATTERN,
@@ -19,12 +20,12 @@ def build_book() -> dict:
     return {
         "reference_date": "2026-11-03",
         "customers": [
-            {"cpf": "52998224725", "name": "Ana Souza", "email": "ana@example.com"},
+            {"cpf": "00000000191", "name": "Ana Souza", "email": "ana@example.com"},
         ],
         "orders": [
             {
                 "number": "PED-10001",
-                "customer_cpf": "52998224725",
+                "customer_cpf": "00000000191",
                 "status": "Entregue",
                 "delivered_on": "2026-10-31",
                 "region": "Sul",
@@ -55,6 +56,21 @@ def book_path(tmp_path):
     return write_book(tmp_path, build_book())
 
 
+def test_it_should_default_the_order_discount_to_zero(book_path):
+    order = load_orders(book_path).orders[0]
+
+    assert order.discount == Decimal("0")
+
+
+def test_it_should_load_the_order_discount_as_a_decimal(tmp_path):
+    book = build_book()
+    book["orders"][0]["discount"] = 20.1
+
+    order = load_orders(write_book(tmp_path, book)).orders[0]
+
+    assert order.discount == Decimal("20.10")
+
+
 def test_it_should_load_an_order_book_from_a_json_file(book_path):
     book = load_orders(book_path)
 
@@ -72,7 +88,7 @@ def test_it_should_load_the_customers_of_the_book(book_path):
     book = load_orders(book_path)
 
     assert book.customers == [
-        Customer(cpf="52998224725", name="Ana Souza", email="ana@example.com")
+        Customer(cpf="00000000191", name="Ana Souza", email="ana@example.com")
     ]
 
 

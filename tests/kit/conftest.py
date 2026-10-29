@@ -1,11 +1,7 @@
-import unicodedata
-from pathlib import Path
-
 import pytest
 
-KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
+from tests.kit.helpers import FOOD_AND_LITTER, KIT_DIR
 
-FOOD_AND_LITTER = frozenset({"ração", "areia"})
 FREE_SHIPPING_FLOOR = {"Sul": 149, "Sudeste": 149}
 FREE_SHIPPING_FLOOR_ELSEWHERE = 249
 REFUND_BY_PAYMENT = {
@@ -21,37 +17,18 @@ CANCEL_BY_STATUS = {
 REGRET_WINDOW_DAYS = 7
 DEFECT_WINDOW_DAYS = 30
 
-# expected_outcome -> (required terms, forbidden terms), already folded (no accent, lowercase)
-OUTCOME_TERMS = {
-    "regret_allowed": (("7 dias",), ("fora do prazo", "somente por defeito")),
-    "regret_denied": (("defeito",), ("dentro do prazo",)),
-    "defect_allowed": (("30 dias",), ("fora do prazo",)),
-    "defect_denied": (("30 dias", "fora do prazo"), ()),
-    "refund_pix_5_business_days": (("pix", "5 dias uteis"), ("faturas",)),
-    "refund_card_2_invoices": (("cartao", "2 faturas"), ("5 dias uteis",)),
-    "free_shipping": (("frete gratis",), ("nao tem frete gratis",)),
-    "shipping_charged": (("acima de",), ("ganhou frete gratis",)),
-    "cancel_allowed": (("cancel",), ("fluxo de devolucao",)),
-    "cancel_denied_return_flow": (("devolucao",), ("foi cancelado",)),
-}
-
-
-def fold(text: str) -> str:
-    """NFC, lowercase and accent-free, the comparison form of the lexical net."""
-    decomposed = unicodedata.normalize("NFD", unicodedata.normalize("NFC", text))
-    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
-
 
 def _regret(order, days, sku):
     if days > REGRET_WINDOW_DAYS:
         return "regret_denied"
     if sku is None:
-        opened = any(item.opened for item in order.items)
-    else:
-        item = next((i for i in order.items if i.sku == sku), None)
-        if item is None:
-            pytest.fail(f"oracle: {sku} is not an item of {order.number}")
-        opened = item.opened and item.category in FOOD_AND_LITTER
+        if any(item.opened for item in order.items):
+            pytest.fail(f"oracle: {order.number} has an opened item, cite a SKU")
+        return "regret_allowed"
+    item = next((i for i in order.items if i.sku == sku), None)
+    if item is None:
+        pytest.fail(f"oracle: {sku} is not an item of {order.number}")
+    opened = item.opened and item.category in FOOD_AND_LITTER
     return "regret_denied" if opened else "regret_allowed"
 
 
@@ -68,7 +45,8 @@ def _rn01(order, reference_date, sku, family):
 
 def _rn03(order):
     floor = FREE_SHIPPING_FLOOR.get(order.region, FREE_SHIPPING_FLOOR_ELSEWHERE)
-    return "free_shipping" if order.total > floor else "shipping_charged"
+    purchase_value = order.total - order.discount
+    return "free_shipping" if purchase_value > floor else "shipping_charged"
 
 
 def _rn04(order):
@@ -125,13 +103,3 @@ def products(kit_dir):
 @pytest.fixture
 def oracle(oracle_for, order_book):
     return oracle_for(order_book.reference_date)
-
-
-@pytest.fixture
-def outcome_terms():
-    return OUTCOME_TERMS
-
-
-@pytest.fixture(name="fold")
-def fold_fixture():
-    return fold

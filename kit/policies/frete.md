@@ -15,7 +15,7 @@ O frete é grátis para compras acima de um valor mínimo, que depende da regiã
 
 ## Como o valor da compra é calculado
 
-O valor da compra é a soma dos itens, sem o frete. A soma usa o preço dos itens já com os descontos de promoção ou cupom aplicados. O frete nunca entra na conta para atingir o mínimo.
+O valor da compra é o total do pedido menos o desconto aplicado a ele. O frete nunca entra na conta para atingir o mínimo.
 
 ## Se o frete não for grátis
 

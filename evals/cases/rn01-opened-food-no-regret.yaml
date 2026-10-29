@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Meu CPF é 519.273.846-64. Quero devolver a ração PX-0001 do pedido PED-10003, meu gato não gostou. Eu já abri o pacote.
+- Meu CPF é 000.000.002-72. Quero devolver a ração PX-0001 do pedido PED-10003, meu gato não gostou. Eu já abri o pacote.
 expected_doc: troca-e-devolucao.md
 expected_outcome: regret_denied
 checks:

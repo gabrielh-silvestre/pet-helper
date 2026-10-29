@@ -1,19 +1,17 @@
 import csv
 import re
-import unicodedata
 from decimal import Decimal
 from difflib import SequenceMatcher
 from itertools import combinations
-from pathlib import Path
 
 import pytest
+
 from pet_helper.catalog.models import SKU_PATTERN
+from tests.kit.helpers import KIT_DIR, nfc, prompts_section
 
 pytestmark = pytest.mark.integration
 
-KIT = Path(__file__).resolve().parents[2] / "kit"
-CATALOG = KIT / "catalog.csv"
-PROMPTS = KIT / "PROMPTS.md"
+CATALOG = KIT_DIR / "catalog.csv"
 
 HEADER = "SKU,nome,categoria,espécie,preço,estoque,descrição"
 BRANDS = ["Focinhex", "Bigodin", "Latidão", "Miauzito", "Patacorp"]
@@ -30,10 +28,6 @@ REAL_BRANDS = [
     "Hill's",
     "Friskies",
 ]
-
-
-def nfc(text: str) -> str:
-    return unicodedata.normalize("NFC", text)
 
 
 @pytest.fixture(scope="module")
@@ -124,10 +118,7 @@ def test_it_should_not_mention_a_real_pet_brand(rows, field):
 
 @pytest.fixture(scope="module")
 def catalog_section() -> str:
-    text = nfc(PROMPTS.read_text(encoding="utf-8"))
-    match = re.search(r"^## Catálogo\n(.*?)(?=^## |\Z)", text, re.M | re.S)
-    assert match, "PROMPTS.md has no '## Catálogo' section"
-    return match.group(1)
+    return prompts_section("Catálogo")
 
 
 def test_it_should_record_the_catalog_prompt_in_a_fenced_block(catalog_section):

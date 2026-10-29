@@ -1,13 +1,14 @@
 import re
-import unicodedata
 from pathlib import Path
 
 import pytest
 
+from tests.kit.helpers import KIT_DIR, nfc, section_of
+
 pytestmark = pytest.mark.integration
 
-ROOT = Path(__file__).resolve().parents[2]
-KIT = ROOT / "kit"
+KIT = KIT_DIR
+ROOT = KIT_DIR.parent
 CASES = ROOT / "evals" / "cases"
 
 BRANDS = ["Focinhex", "Bigodin", "Latidão", "Miauzito", "Patacorp"]
@@ -47,18 +48,6 @@ KIT_SECTIONS = [
     "Orçamento de casos",
     "Revisão",
 ]
-
-
-def nfc(text: str) -> str:
-    return unicodedata.normalize("NFC", text)
-
-
-def section_of(text: str, heading: str, level: int = 2) -> str | None:
-    """Body of a heading up to the next heading of the same or a higher level."""
-    marks = "#" * level
-    pattern = rf"^{marks} {re.escape(heading)}\n(.*?)(?=^#{{1,{level}}} |\Z)"
-    match = re.search(pattern, text, re.M | re.S)
-    return match.group(1) if match else None
 
 
 def load_text(path: Path) -> str:
@@ -218,8 +207,10 @@ def test_it_should_mention_every_off_topic_theme(kit_text, topic):
     assert topic in kit_section(kit_text, "Temas fora de propósito").lower()
 
 
-def test_it_should_declare_the_case_budget_of_25(kit_text):
-    assert re.search(r"\b25 casos\b", kit_section(kit_text, "Orçamento de casos"))
+def test_it_should_declare_the_case_budget_of_30(kit_text):
+    section = kit_section(kit_text, "Orçamento de casos")
+
+    assert re.search(r"\bSão 30 casos normais\b", section)
 
 
 def test_it_should_cite_only_eval_case_files_as_case_ids_in_the_trap_map(

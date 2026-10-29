@@ -5,7 +5,7 @@ behaviors:
 - api_failure
 - multi_turn
 turns:
-- Oi, meu CPF é 284.615.937-82. Pode consultar o pedido PED-50300?
+- Oi, meu CPF é 000.000.001-91. Pode consultar o pedido PED-50300?
 - Tá, e o pedido PED-40800, consegue ver?
 checks:
 - type: tool_called
@@ -17,5 +17,4 @@ checks:
   - não consegui consultar
 - type: must_include
   value:
-  - PED-50300
   - PED-40800

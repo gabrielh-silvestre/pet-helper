@@ -6,15 +6,17 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Olá, CPF 95238176473. O pedido PED-10007 não deveria ter frete grátis?
+- Olá, CPF 00000000434. O pedido PED-10007 não deveria ter frete grátis?
 expected_doc: frete.md
 expected_outcome: shipping_charged
 checks:
 - type: expected_value
   value:
-  - acima de R$ 249
-  - acima de 249
-  - estritamente maior
+  - não tem frete grátis
+  - não teve frete grátis
+  - não ganhou frete grátis
+  - frete não é grátis
+  - frete não foi grátis
 - type: cites_source
   value: frete.md
 - type: mentions_order
@@ -23,6 +25,5 @@ checks:
   value:
   - o frete foi grátis
   - o frete saiu grátis
-  - ganhou frete grátis
 - type: tool_called
   value: get_order

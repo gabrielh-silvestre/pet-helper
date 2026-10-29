@@ -15,8 +15,6 @@ Aos domingos e nos feriados nacionais, qualquer que seja o dia da semana, o aten
 
 O assistente virtual da petx responde no chat a qualquer hora, todos os dias. Ele ajuda com dúvidas sobre pedidos, entrega, trocas, devoluções, reembolsos e as demais políticas da petx.
 
-Fora do horário dos atendentes, ele registra o seu pedido e a equipe retoma no próximo horário de atendimento.
-
 ## O que o assistente virtual não faz
 
 O assistente virtual não dá diagnóstico veterinário nem orienta tratamento. Se a pergunta for sobre a saúde do seu animal, ele passa a conversa para uma pessoa da equipe. Em caso de emergência, procure um médico-veterinário imediatamente.

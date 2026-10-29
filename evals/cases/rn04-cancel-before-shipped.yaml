@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Oi, CPF 95238176473. Quero cancelar o pedido PED-10007.
+- Oi, CPF 00000000434. Quero cancelar o pedido PED-10007.
 expected_doc: cancelamento.md
 expected_outcome: cancel_allowed
 checks:

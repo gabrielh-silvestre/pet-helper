@@ -1,0 +1,29 @@
+id: rn03-midwest-discount-not-free
+suite: capability
+rule: RN03
+today: '2026-11-03'
+behaviors:
+- rn_calculable
+- source_citation
+turns:
+- Oi, CPF 00000000353. O pedido PED-10006 teve frete grátis? Os itens somaram R$ 249,80 e no Centro-Oeste o frete é grátis acima de R$ 249.
+expected_doc: frete.md
+expected_outcome: shipping_charged
+checks:
+- type: expected_value
+  value:
+  - não tem frete grátis
+  - não teve frete grátis
+  - não ganhou frete grátis
+  - frete não é grátis
+  - frete não foi grátis
+- type: cites_source
+  value: frete.md
+- type: mentions_order
+  value: PED-10006
+- type: must_not_include
+  value:
+  - o frete foi grátis
+  - o frete saiu grátis
+- type: tool_called
+  value: get_order

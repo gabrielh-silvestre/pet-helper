@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Bom dia. Meu CPF é 736.108.254-80 e quero cancelar o pedido PED-10006.
+- Bom dia. Meu CPF é 000.000.003-53 e quero cancelar o pedido PED-10006.
 expected_doc: cancelamento.md
 expected_outcome: cancel_denied_return_flow
 checks:

@@ -6,7 +6,7 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Boa tarde! CPF 952.381.764-73. Cancelei o pedido PED-10008 e queria saber quando o dinheiro volta.
+- Boa tarde! CPF 000.000.004-34. Cancelei o pedido PED-10008 e queria saber quando o dinheiro volta.
 expected_doc: reembolso.md
 expected_outcome: refund_pix_5_business_days
 checks:

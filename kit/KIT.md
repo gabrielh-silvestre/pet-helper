@@ -18,10 +18,10 @@ Os quatro clientes têm nomes claramente inventados e e-mails sob `clientes.exam
 
 | Cliente | CPF | Pedidos |
 | --- | --- | --- |
-| C1, Tobias Pimpão Fictício | `28461593782` | PED-10001, PED-10002 |
-| C2, Zuleica Bigodes Imaginária | `51927384664` | PED-10003, PED-10004 |
-| C3, Osvaldo Focinho Inventado | `73610825480` | PED-10005, PED-10006 |
-| C4, Marilu Patinhas de Mentira | `95238176473` | PED-10007, PED-10008 |
+| C1, Tobias Pimpão Fictício | `00000000191` | PED-10001, PED-10002 |
+| C2, Zuleica Bigodes Imaginária | `00000000272` | PED-10003, PED-10004 |
+| C3, Osvaldo Focinho Inventado | `00000000353` | PED-10005, PED-10006 |
+| C4, Marilu Patinhas de Mentira | `00000000434` | PED-10007, PED-10008 |
 
 | Pedido | Região | Status | Entrega | Pagamento | Total | Itens |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ Os quatro clientes têm nomes claramente inventados e e-mails sob `clientes.exam
 | PED-10003 | Sudeste (SP) | Entregue | 2026-11-01, há 2 dias | Pix | 94.80 | PX-0001 (ração aberta), PX-0027 |
 | PED-10004 | Sudeste (SP) | Entregue | 2026-10-27, há 7 dias | Cartão | 106.70 | 2 x PX-0021, PX-0039 |
 | PED-10005 | Centro-Oeste (GO) | Entregue | 2026-10-22, há 12 dias | Cartão | 164.80 | PX-0020 (areia aberta), PX-0041 |
-| PED-10006 | Centro-Oeste (GO) | Enviado | - | Pix | 249.80 | PX-0004, PX-0011 |
+| PED-10006 | Centro-Oeste (GO) | Enviado | - | Pix | 249.80, com desconto de 25.00 | PX-0004, PX-0011 |
 | PED-10007 | Nordeste (BA) | Pago | - | Cartão | 249.00 | PX-0008 |
 | PED-10008 | Nordeste (BA) | Cancelado | - | Pix | 61.70 | 2 x PX-0013, PX-0045 |
 
@@ -38,7 +38,7 @@ Os pedidos PED-50300 e PED-40800 não existem no arquivo: são os números reser
 
 O catálogo, em [catalog.csv](catalog.csv), tem 48 produtos (12 ração, 8 areia, 14 brinquedo e 14 acessório) de cinco marcas fictícias: Focinhex, Bigodin, Latidão, Miauzito e Patacorp. Há 7 pares de nomes parecidos (por exemplo PX-0001 e PX-0002, PX-0004 e PX-0005) e 4 produtos sem estoque: PX-0005, PX-0016, PX-0028 e PX-0047.
 
-Atenção: os CPFs têm dígitos verificadores válidos, para passar pelo validador. Por isso podem coincidir com CPFs de pessoas reais. Não os use fora deste kit.
+Atenção: os CPFs têm dígitos verificadores válidos, para passar pelo validador, e usam a faixa `000.000.00x`, improvável de coincidir com CPF real. Não os use fora deste kit.
 
 ## Mapa de colunas e valores
 
@@ -64,7 +64,7 @@ Valores aceitos, em português, como aparecem nos arquivos:
 | região | Sul, Sudeste, Centro-Oeste, Nordeste, Norte |
 | pagamento | Pix, Cartão |
 
-O `preço` é um decimal com ponto e duas casas (`62.90`). No `orders.json`, `total` é uma string com duas casas e vale a soma de `quantity * unit_price` dos itens, sem o frete. O frete nunca entra no total, porque a RN03 compara o total com o limite da região. Cada item copia `unit_price` e `category` da linha do catálogo, e `opened` só é verdadeiro em ração ou areia.
+O `preço` é um decimal com ponto e duas casas (`62.90`). No `orders.json`, `total` é uma string com duas casas e vale a soma de `quantity * unit_price` dos itens, sem o frete e sem o desconto. O frete nunca entra no total, porque a RN03 compara o valor da compra com o limite da região. O campo `discount` é opcional e vale 0 quando falta; só o PED-10006 o tem (25.00). O valor da compra da RN03 é `total - discount`: 224.80 no PED-10006, que fica abaixo de R$ 249 e paga frete. Cada item copia `unit_price` e `category` da linha do catálogo, e `opened` só é verdadeiro em ração ou areia.
 
 ## Regras inventadas
 
@@ -112,8 +112,8 @@ As regras de negócio seguem o desafio sem exceção. Estes detalhes foram inven
 
 - `troca-e-devolucao.md`: o dia da entrega não conta, e o 7º e o 30º dia ainda estão no prazo.
 - `reembolso.md`: na devolução, o reembolso começa quando a petx recebe o produto; no cancelamento, no momento em que ele é feito.
-- `cancelamento.md`: vale o status do pedido no momento em que o atendimento trata o pedido de cancelamento. Depois de Enviado, o cliente segue o fluxo de devolução de `troca-e-devolucao.md`, contado da entrega.
-- `frete.md`: a soma que decide o frete grátis usa o preço dos itens já com promoção ou cupom, sem o frete. Na assinatura, o limite é conferido a cada entrega, sobre os itens com o desconto da assinatura.
+- `cancelamento.md`: vale o status do pedido no momento em que o cliente pede o cancelamento. A política não manda falar com o atendimento. Depois de Enviado, o cliente segue o fluxo de devolução de `troca-e-devolucao.md`, contado da entrega.
+- `frete.md`: o valor que decide o frete grátis é o total do pedido menos o desconto aplicado (`discount`), sem o frete. Na assinatura, o limite é conferido a cada entrega, sobre os itens com o desconto da assinatura.
 
 ## Temas fora de propósito
 
@@ -141,6 +141,9 @@ Cada caso de `evals/cases/` arma uma armadilha sobre dados do kit. A coluna de d
 | Troca de espécie no meio da conversa | rações de gato (PX-0001, PX-0002, PX-0003, PX-0009, PX-0010, PX-0012) contra as de cão | `multi-turn-species-switch` |
 | Pedido que não existe, com CPF próprio | PED-99999 | `own-nonexistent-order` |
 | Resposta tirada de política inventada | `canais-e-horarios.md`, WhatsApp das 8h às 18h | `policy-support-channels` |
+| Resposta tirada de política inventada | `assinatura.md`, pausa de até 60 dias corridos | `policy-subscription-pause` |
+| Resposta tirada de política inventada | `retirada-em-loja.md`, 5 dias corridos para retirar | `policy-store-pickup` |
+| Resposta tirada de política inventada | `privacidade-e-dados-pessoais.md`, pedidos guardados por 5 anos | `policy-privacy-retention` |
 | Produto sem estoque | PX-0005 | `rec-out-of-stock` |
 | Nomes parecidos, 3 kg e 10 kg | PX-0001 e PX-0002 | `rec-similar-names` |
 | RN01, ração aberta, arrependimento negado | PED-10003, PX-0001 | `rn01-opened-food-no-regret` |
@@ -150,18 +153,19 @@ Cada caso de `evals/cases/` arma uma armadilha sobre dados do kit. A coluna de d
 | RN02, reembolso Pix em até 5 dias úteis | PED-10008 | `rn02-pix-refund-cancelled` |
 | RN03, R$ 249 exatos no Nordeste paga frete | PED-10007, PX-0008 | `rn03-northeast-exact-249-not-free` |
 | RN03, acima de R$ 149 no Sul tem frete grátis, sem escalar | PED-10001 | `rn03-south-above-149-free` |
+| RN03, R$ 149 exatos no Sul paga frete | PED-10002, PX-0043 | `rn03-south-exact-149-not-free` |
+| RN03, desconto tira o frete grátis (249.80 menos 25.00) | PED-10006 | `rn03-midwest-discount-not-free` |
 | RN04, cancelamento depois de Enviado | PED-10006 | `rn04-cancel-after-shipped` |
 | RN04, cancelamento antes de Enviado | PED-10007 | `rn04-cancel-before-shipped` |
 
 Armadilhas sem caso, por decisão da cadeira do dono (rodada 1 da auditoria):
 
 - Defeito fora dos 30 dias (`defect_denied`): nenhum pedido do kit foi entregue há mais de 30 dias, e só o oráculo dos testes cobre o desfecho.
-- R$ 149 exatos no Sul: o PED-10002 (PX-0043) está armado, mas o caso foi trocado. O limite estrito da RN03 já fica provado pelo caso de R$ 249 no Nordeste, e o orçamento de 25 casos foi para ter os dois lados de cada regra.
-- Regras inventadas de assinatura, retirada em loja e privacidade: só `canais-e-horarios.md` tem caso. O orçamento ficou com as armadilhas que o desafio lista; essas políticas servem de texto para a recuperação.
+- Limites de texto: `api-failures` checa com `must_include` só o PED-40800 da última resposta; o texto do 1º turno (PED-50300) não tem assert, só `tool_called`. É limite da unidade de eval, como no `adv-coupon-injection`.
 
 ## Orçamento de casos
 
-São 25 casos normais, o limite superior do critério AC18, em `evals/cases/`. Mais cerca de 5 casos held-out, gerados depois em um fluxo isolado, sem que quem gera os casos normais os veja. O teto do desafio é de 30 casos no total.
+São 30 casos normais em `evals/cases/`. Mais cerca de 5 casos held-out, gerados depois em um fluxo isolado, sem que quem gera os casos normais os veja. O teto do desafio é de 30 casos no total, então a suíte passa dele quando o held-out entrar; o dono enxuga depois.
 
 ## Revisão
 
@@ -171,7 +175,7 @@ Rodada 1: veredito REVISE, com 0 BLOCKING, 2 URGENT, 10 NORMAL e 4 MINOR. O prom
 
 - Políticas, reparo 2: tirou da RN01 a condição extra de uso e embalagem e fixou a contagem de dias (o dia da entrega não conta; o 7º e o 30º dia valem). O Pix perdeu a condição de início, "chargeback" virou "estorno", e o reembolso passou a começar quando a petx recebe o produto, ou no cancelamento. O frete soma com promoção e cupom e não entra na conta. Na assinatura, o desconto vale por entrega. Na privacidade, os 3 dígitos do CPF valem só no e-mail do encarregado. No cancelamento, vale o status no momento do atendimento. Em canais, feriado só por e-mail.
 - Casos, reparo 1: saíram `rn01-regret-in-window` e `esc-ordinary-complaint-no-escalation`; entraram `rn01-regret-window-expired-day-12` e `rn02-card-refund-return`; `rn03-south-exact-149-not-free` e `rn03-center-west-above-149-not-free` deram lugar a `rn03-south-above-149-free` e `rn03-northeast-exact-249-not-free`. Os asserts foram alinhados ao texto das políticas e cada caso de regra ganhou um `must_not_include` do veredito oposto.
-- Decisão de cobertura (cadeira do dono): toda regra com os dois lados, mantendo 25 casos. Ficaram descobertos `defect_denied`, R$ 149 exatos no Sul e as regras inventadas além de canais e horários, como no mapa de armadilhas.
+- Decisão de cobertura (cadeira do dono): toda regra com os dois lados. Ficou descoberto `defect_denied`, como no mapa de armadilhas. Depois, no PR #3, o dono acrescentou os casos de R$ 149 exatos no Sul, de desconto no PED-10006 e das políticas de assinatura, retirada em loja e privacidade, e a suíte foi a 30 casos.
 
 Dois MINOR não foram aplicados. Os sobrenomes artificiais dos clientes ficam de propósito, para que os nomes sejam claramente fictícios. A diferença entre "total" e "subtotal" também fica: o total vale a soma dos itens sem frete, declarado em `frete.md` e na seção de colunas deste documento.
 
@@ -187,7 +191,7 @@ Os reparos finais da rodada 2 não passaram por uma terceira rodada do critic, j
 
 ### Script
 
-`uv run python kit/validate.py` não imprime nenhuma falha e termina com código 0. O [validate.py](validate.py) tem 55 linhas. A cadeira do dono o cortou do que tinha (99 linhas) ao que o desafio lista: 8 a 10 políticas, H1 e faixa de palavras de cada uma, cabeçalho literal do CSV em NFC e 40 a 60 produtos, 8 a 10 pedidos e todo SKU de pedido presente no catálogo. Arquivo ausente ou CSV vazio viram falha, não erro. O alvo era 45 linhas; as 55 finais foram aceitas para manter as checagens legíveis. Para aceitar mais de 10 políticas, ajuste a constante `POLICIES` no topo do script. Padrão e duplicidade de SKU seguem na CI, que roda os testes do kit.
+`uv run python kit/validate.py` não imprime nenhuma falha e termina com código 0. O [validate.py](validate.py) tem 76 linhas. A cadeira do dono o cortou do que tinha (99 linhas) ao que o desafio lista: 8 a 10 políticas, H1 e faixa de palavras de cada uma, cabeçalho literal do CSV em NFC e 40 a 60 produtos, 8 a 10 pedidos e todo SKU de pedido presente no catálogo. Arquivo ausente ou CSV vazio viram falha, não erro. Depois da revisão do PR #3, o script também falha para pedido Entregue sem `delivered_on` e para campo extra de cliente, pedido ou item com nome parecido com um campo conhecido (como `opend`), com a sugestão na mensagem; os modelos seguem com `extra="allow"`. O alvo era 45 linhas; as 76 finais foram aceitas para manter as checagens legíveis. Para aceitar mais de 10 políticas, ajuste a constante `POLICIES` no topo do script. Padrão e duplicidade de SKU seguem na CI, que roda os testes do kit.
 
 A cobertura das marcas não é checada pelo script: foi conferida na geração do catálogo e na auditoria do critic, e a CI barra marcas reais conhecidas no nome e na descrição dos produtos (`tests/kit/test_kit_catalog.py`). Os geradores usaram scripts descartáveis no scratchpad, para a aritmética dos totais e para gravar o YAML dos casos. Esses scripts não foram versionados.
 

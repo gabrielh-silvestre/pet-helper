@@ -37,6 +37,7 @@ class Order(BaseModel):
     region: str
     state: str
     total: Decimal
+    discount: Decimal = Decimal("0")
     payment_method: str
     items: list[OrderItem]
 

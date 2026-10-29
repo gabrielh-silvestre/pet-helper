@@ -1,17 +1,19 @@
 import dataclasses
 import json
+from decimal import Decimal
 
 import pytest
 
-from pet_helper.orders.api import ApiResponse, MockOrderApi, OrderApi
+from pet_helper.orders.api import FAILURE_ENV, ApiResponse, MockOrderApi, OrderApi
 
-OWNER_CPF = "52998224725"
-OWNER_CPF_FORMATTED = "529.982.247-25"
-OTHER_CPF = "11144477735"
-OTHER_CPF_FORMATTED = "111.444.777-35"
+OWNER_CPF = "00000000191"
+OWNER_CPF_FORMATTED = "000.000.001-91"
+OTHER_CPF = "00000000272"
+# built from code points because RUF001 rejects non-ASCII digit literals
+FULL_WIDTH_OWNER_CPF = "".join(chr(ord(d) + 0xFEE0) for d in OWNER_CPF)
+OTHER_CPF_FORMATTED = "000.000.002-72"
 REFERENCE_DATE = "2026-11-03"
 STATUSES = ["Pago", "Em separação", "Enviado", "Entregue", "Cancelado"]
-FAILURE_ENV = "PET_HELPER_ORDER_API_FAILURE"
 
 
 def _order(number, customer_cpf, status, **extra):
@@ -67,7 +69,9 @@ def _no_ambient_failure(monkeypatch):
 
 @pytest.fixture
 def api(tmp_path):
-    orders = [_order("PED-10001", OWNER_CPF, "Entregue", gift_note="wrap it")]
+    orders = [
+        _order("PED-10001", OWNER_CPF, "Entregue", gift_note="wrap it", discount=12.5)
+    ]
     orders += [
         _order(_status_number(i), OWNER_CPF, status)
         for i, status in enumerate(STATUSES)
@@ -105,6 +109,18 @@ def test_it_should_preserve_extra_item_fields_in_the_body(api):
     assert response.body["items"][0]["item_note"] == "kept"
 
 
+def test_it_should_return_the_order_discount_in_the_body(api):
+    response = api.get("PED-10001", OWNER_CPF)
+
+    assert Decimal(response.body["discount"]) == Decimal("12.5")
+
+
+def test_it_should_return_a_zero_discount_for_an_order_without_one(api):
+    response = api.get(_status_number(0), OWNER_CPF)
+
+    assert Decimal(response.body["discount"]) == Decimal("0")
+
+
 def test_it_should_not_expose_the_reference_date_in_the_body(api):
     response = api.get("PED-10001", OWNER_CPF)
 
@@ -126,6 +142,18 @@ def test_it_should_return_404_when_the_order_number_does_not_exist(api):
 
 def test_it_should_return_403_when_the_order_belongs_to_another_customer(api):
     response = api.get("PED-10001", OTHER_CPF)
+
+    assert response == ApiResponse(403, {"error": "forbidden"})
+
+
+def test_it_should_return_403_for_the_owner_cpf_with_trailing_characters(api):
+    response = api.get("PED-10001", OWNER_CPF + "abc")
+
+    assert response == ApiResponse(403, {"error": "forbidden"})
+
+
+def test_it_should_return_403_for_the_owner_cpf_written_with_full_width_digits(api):
+    response = api.get("PED-10001", FULL_WIDTH_OWNER_CPF)
 
     assert response == ApiResponse(403, {"error": "forbidden"})
 
