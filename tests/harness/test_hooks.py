@@ -10,7 +10,7 @@ ROOT = Path(__file__).parents[2]
 PRE_TOOL_USE = json.loads((ROOT / ".claude/settings.json").read_text())["hooks"][
     "PreToolUse"
 ]
-EXECUTOR_TESTS, HELD_OUT = (entry["hooks"][0]["command"] for entry in PRE_TOOL_USE)
+EXECUTOR_TESTS, HELD_OUT = (PRE_TOOL_USE[i]["hooks"][0]["command"] for i in (0, 1))
 
 
 def _run(command, payload, held_out=False):

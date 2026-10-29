@@ -18,7 +18,7 @@
   "phases": [
     {
       "name": "interview",
-      "command": "/oh-my-claudecode:deep-interview --frontier",
+      "command": "M1 /pre-code step 2",
       "type": "interview",
       "target": "interview",
       "artifact": "docs/specs/<slug>/spec.md",
@@ -26,7 +26,7 @@
     },
     {
       "name": "plan",
-      "command": "/oh-my-claudecode:ralplan",
+      "command": "M1 /pre-code step 3",
       "type": "plan",
       "target": "plan",
       "artifact": "docs/specs/<slug>/plan.md",
@@ -39,7 +39,7 @@
     },
     {
       "name": "architecture",
-      "command": "/owner-seat",
+      "command": "M1 /pre-code step 4",
       "type": "architecture",
       "target": "architecture",
       "artifact": "docs/specs/<slug>/architecture.md",
@@ -51,21 +51,34 @@
       ]
     },
     {
-      "name": "delivery",
-      "command": "/oh-my-claudecode:ralph",
-      "type": "delivery",
-      "target": "delivery",
-      "artifact": ".omc/prd.json",
+      "name": "approval",
+      "command": "M1 /pre-code step 5",
+      "type": "approval",
+      "target": "approval",
+      "artifact": "docs/specs/<slug>/architecture.md",
       "links": [
         {
-          "relation": "delivery-derives-from-architecture",
+          "relation": "approval-derives-from-architecture",
           "to": "architecture"
         }
       ]
     },
     {
+      "name": "delivery",
+      "command": "M2 /deliver step 4",
+      "type": "delivery",
+      "target": "delivery",
+      "artifact": ".omc/prd.json",
+      "links": [
+        {
+          "relation": "delivery-derives-from-approval",
+          "to": "approval"
+        }
+      ]
+    },
+    {
       "name": "local-review",
-      "command": "/review-pr --normal",
+      "command": "M2 /deliver step 5",
       "type": "local-review",
       "target": "local-review",
       "artifact": ".ignore/reviews/",
@@ -78,7 +91,7 @@
     },
     {
       "name": "panel-review",
-      "command": "/review-pr --panel",
+      "command": "M3 /pr-panel step 6",
       "type": "panel-review",
       "target": "panel-review",
       "artifact": ".ignore/reviews/prs/PR<N>/review.md",
@@ -251,6 +264,22 @@
               "minor"
             ],
             "additionalProperties": false
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "panel"
+            ]
+          },
+          "mode_reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "product_decisions": {
+            "type": "string",
+            "format": "attachment"
           }
         },
         "required": [
@@ -312,12 +341,95 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 300
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "panel"
+            ]
+          },
+          "mode_reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "product_decisions": {
+            "type": "string",
+            "format": "attachment"
           }
         },
         "required": [
           "unit",
           "summary",
           "findings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "approval",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "document": {
+            "type": "string",
+            "format": "attachment"
+          }
+        },
+        "required": [
+          "unit",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "impasse",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "phase": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "progress": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          }
+        },
+        "required": [
+          "unit",
+          "summary",
+          "phase",
+          "reason"
         ],
         "additionalProperties": false
       }
@@ -345,16 +457,6 @@
       ]
     },
     {
-      "name": "delivery-derives-from-architecture",
-      "kind": "derivesFrom",
-      "from": [
-        "delivery"
-      ],
-      "to": [
-        "architecture"
-      ]
-    },
-    {
       "name": "local-review-derives-from-delivery",
       "kind": "derivesFrom",
       "from": [
@@ -372,6 +474,26 @@
       ],
       "to": [
         "local-review"
+      ]
+    },
+    {
+      "name": "approval-derives-from-architecture",
+      "kind": "derivesFrom",
+      "from": [
+        "approval"
+      ],
+      "to": [
+        "architecture"
+      ]
+    },
+    {
+      "name": "delivery-derives-from-approval",
+      "kind": "derivesFrom",
+      "from": [
+        "delivery"
+      ],
+      "to": [
+        "approval"
       ]
     }
   ],
@@ -394,6 +516,12 @@
         "kind": "occurred",
         "select": {
           "type": "architecture"
+        }
+      },
+      {
+        "kind": "occurred",
+        "select": {
+          "type": "approval"
         }
       },
       {
@@ -442,6 +570,18 @@
         "kind": "no_pending",
         "pending": {
           "type": "architecture"
+        },
+        "resolvedBy": {
+          "kind": "derivesFrom",
+          "from": [
+            "approval"
+          ]
+        }
+      },
+      {
+        "kind": "no_pending",
+        "pending": {
+          "type": "approval"
         },
         "resolvedBy": {
           "kind": "derivesFrom",

@@ -31,7 +31,7 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 - `GLOSSARY.md`: the domain language (Customer, Session Customer, Order, Return, Escalation Reason...). Use these names in code; the Portuguese term next to each entry is the customer-facing word.
 - `docs/directives/estrategia.md`: the owner's premises. Only the owner edits this file.
 - `docs/directives/cadeira-do-dono.md`: who decides what. Product and strategy go to the owner; architecture goes to the owner-seat critic (`opus`, the only subagent exception); code-level choices are decided by the executor and recorded, not asked.
-- `docs/directives/fluxo-desenvolvimento.md`: the 8-step flow, git hooks, CI and agent hooks.
+- `docs/directives/fluxo-desenvolvimento.md`: the 8-step flow grouped into three macros, git hooks, CI and agent hooks.
 - `docs/directives/loop-melhoria.md`: the eval-driven improvement loop.
 - `docs/adr/`: decisions that must not be re-litigated without revisiting the ADR.
 
@@ -44,7 +44,7 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 
 ## Working rules
 
-- Phase commands, in order: `/oh-my-claudecode:deep-interview --frontier` (spec, humanized copy in `docs/specs/<slug>/spec.md`), `/oh-my-claudecode:ralplan` (stops at the approved plan, never hands off to `team` or `ralph`), `/owner-seat`, `/oh-my-claudecode:ralph` (delivery, TDD loop), `/review-pr --normal` on the worktree, `/review-pr --panel` in a fresh Herdr tab.
+- A unit of work starts with `/pre-code <objective>`: three macro skills chain the phases (M1 `/pre-code`: interview, plan, owner seat, owner approval; M2 `/deliver <slug>`: ralph, local review, draft PR; M3 `/pr-panel <slug> <PR> <mode>`: PR review in a fresh Herdr tab, fixes, automatic verdict). Each macro resumes a stopped unit when called with its slug. Unit state and the guards the hooks enforce live in `.claude/hooks/flow.sh`; tests in `tests/harness/test_flow.py`.
 - Existing tools before custom code: every interview and plan runs a research step on existing libraries, targeted (what the libraries already chosen in `docs/architecture.md` ship) or broad (a capability with no chosen library); the agent picks which and says why. Every piece built from scratch names in the plan the existing tool considered and why it does not fit.
 - TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them.
 - Nothing that calls the real model runs automatically (no git hook, CI or schedule). Eval rounds are manual, show a cost estimate first and stop at US$5.

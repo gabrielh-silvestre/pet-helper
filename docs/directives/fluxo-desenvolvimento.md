@@ -2,6 +2,21 @@
 
 Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em [cadeira-do-dono.md](cadeira-do-dono.md); os requisitos do desafio, em [requisitos.md](../requisitos.md).
 
+## Macroetapas
+
+As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do projeto. O dono entra só na entrevista, no aval do fim da M1 e no merge.
+
+| Macro | Comando | Etapas | Termina em |
+|---|---|---|---|
+| M1 pré-código | `/pre-code <objetivo>` | 1 a 3 | Pergunta ao dono: aprovar, pedir ajuste ou parar. Aprovar dispara a M2 |
+| M2 entrega | `/deliver <slug>` | 4 a 6 | PR em draft; abre a tab `<slug>-panel` do Herdr e dispara a M3 |
+| M3 painel | `/pr-panel <slug> <PR> <modo>` | 7 | Veredito postado sozinho no head final; o merge segue com o dono |
+
+- Cada macro pode ser chamada à mão com o slug; é assim que se retoma uma unidade parada.
+- Impasse (2 voltas esgotadas, hook barrando a mesma coisa, `ralph` sem convergir, critic sem decisão): a macro para e registra `impasse` no hexlog com fase, motivo e progresso, sem notificação.
+- Achado de revisão que vira decisão de produto vai ao critic da cadeira, que decide; a macro aplica e registra no PR e no hexlog, e o dono revê no merge.
+- Depois das correções de cada revisão, o `code-simplifier` roda de novo sobre o trecho corrigido, só relatando; reprovação volta ao `executor`, no máximo 2 vezes.
+
 ## Etapas
 
 1. **Entrevista em camadas.** Por `/oh-my-claudecode:deep-interview --frontier`, respeitando as camadas de decisão.
@@ -15,7 +30,7 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
    - O planner refaz a pesquisa pontual sobre o que o plano vai construir; toda peça escrita do zero diz no plano qual ferramenta existente foi considerada e por que não serve.
    - O `ralplan` para no plano aprovado e nunca segue para `team` nem `ralph`: a etapa seguinte é sempre a cadeira do dono.
    - O plano de trabalho fica em `.omc/plans/`; uma cópia passada pelo `/humanizar` vai para `docs/specs/<slug>/plan.md`.
-3. **Cadeira do dono.** Por `/owner-seat`: o critic decide a arquitetura que o plano exige e a registra em `docs/specs/<slug>/architecture.md`; o dono dá o aval no pré-PR.
+3. **Cadeira do dono.** Por `/owner-seat`: o critic decide a arquitetura que o plano exige e a registra em `docs/specs/<slug>/architecture.md`; o dono dá o aval no fim da M1, junto com o plano.
 4. **Entrega em loop de TDD.** Por `/oh-my-claudecode:ralph`, com as regras abaixo injetadas nas instruções dele.
    - Vermelho-verde por behavior: o `test-engineer` escreve os testes do behavior e confirma que falham pelo motivo certo; o `executor` os faz passar com o mínimo de código.
    - O `test-engineer` nunca é o `executor`: quem escreve o código não cria teste.
@@ -25,8 +40,11 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
    - Reprovação do `code-simplifier` volta ao `executor`, os testes rodam de novo e o `code-simplifier` reavalia, no máximo 2 vezes; depois disso o impasse vai ao dono.
    - O loop segue spec a spec até a entrega final.
 5. **Revisão local.** Por `/review-pr --normal`, apontando para a worktree, antes de existir PR; levanta achados nas severidades da tabela abaixo.
-6. **Ajustes e PR.** O executor aplica os achados da revisão local e abre o PR em draft.
-7. **Revisão em painel.** Por `/review-pr --panel <N>` no PR aberto, rodado por um agente novo e isolado numa tab nova do Herdr; os MINOR vão para uma issue de follow-up que aponta para o PR.
+6. **Ajustes e PR.** O executor aplica todos os achados da revisão local, MINOR inclusive, e a unidade vira um commit e um PR em draft.
+7. **Revisão do PR.** Por `/review-pr --auto` no PR aberto, rodado por um agente novo e isolado numa tab nova do Herdr, dono exclusivo da worktree até terminar.
+   - Modo `--panel --normal` se a entrega toca regra de negócio (RN01-RN04), acesso a Order ou identidade do Customer ([ADR 0001](../adr/0001-order-access-by-cpf-and-order-number.md)), o prompt do modelo, ou mais de 600 linhas de produção; senão `--normal`. Na dúvida, painel. A M2 escolhe e registra o motivo.
+   - BLOCKING, URGENT e NORMAL são corrigidos sozinhos num commit `fix:` único; os MINOR vão para uma issue de follow-up que aponta para o PR.
+   - O veredito sai por `pr-verdict --auto`, preso ao SHA do último push.
 8. **Merge.** Só o dono faz o merge, como merge commit; o fluxo nunca faz merge sozinho.
 
 O loop de melhoria do agente (evals, métricas e tracing guiando mudanças no assistente) está em [loop-melhoria.md](loop-melhoria.md).
@@ -47,8 +65,8 @@ O loop de melhoria do agente (evals, métricas e tracing guiando mudanças no as
 |---|---|
 | BLOCKING | Corrigido obrigatoriamente, salvo refutação justificada |
 | URGENT | Igual ao BLOCKING |
-| NORMAL | O custo da correção é ponderado; a decisão registra "corrigir" ou "aceitar", com justificativa |
-| MINOR | Não bloqueia; vai para a issue de follow-up |
+| NORMAL | Corrigido pela cadeia, salvo refutação justificada |
+| MINOR | Corrigido na revisão local; na revisão do PR não bloqueia e vai para a issue de follow-up |
 
 ## Gate de verificação
 
@@ -76,6 +94,15 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 - Só o dono edita `docs/directives/estrategia.md`.
 - O `executor` não altera os testes do `test-engineer`, nem por ferramenta de edição nem pelo shell.
 - Os agentes que corrigem o assistente não leem os casos de eval reservados.
+- Guardas das macroetapas, todas em `.claude/hooks/flow.sh` sobre o estado da unidade em `.git/pet-helper-flow.json`:
+  - o registro no hexlog só aceita a fase que a macro declarou (ou `impasse`), nunca uma fase deduzida do comando;
+  - depois do handoff para a M3, só a sessão dela escreve na worktree;
+  - o PRD do `ralph` precisa de `userStories` e de `feedbackCommands` silenciosos no sucesso;
+  - o veredito só é postado com o head da worktree já enviado e preso a esse SHA;
+  - `ralph` e `team` só rodam depois do aval do dono;
+  - o aval só é gravado com spec, plano, arquitetura, seção `## Ferramentas existentes` no plano e as cópias originais em `.omc/`.
+- Todo hook usa `onFailure: "block"`: hook que não consegue rodar barra em vez de deixar passar.
+- Uma unidade em voo por clone: `/pre-code` de outro objetivo recusa até a M3 da unidade atual terminar.
 
 ### Retorno ao agente
 

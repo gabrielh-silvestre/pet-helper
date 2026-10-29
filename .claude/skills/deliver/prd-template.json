@@ -1,0 +1,21 @@
+{
+  "project": "pet-helper",
+  "branchName": "<type>/<slug>",
+  "description": "<objective of the unit, from docs/specs/<slug>/spec.md>",
+  "repoQualityClass": "production",
+  "feedbackCommands": [
+    "cd <worktree> && out=$(uv run pytest -q --cov 2>&1) || { echo \"$out\"; exit 1; }",
+    "cd <worktree> && git add -A && out=$(uv run prek run --all-files 2>&1) || { echo \"$out\"; exit 1; }",
+    "cd <worktree> && out=$(uv run deptry . 2>&1) || { echo \"$out\"; exit 1; }"
+  ],
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "<one behavior or plan step>",
+      "description": "<what changes and where>",
+      "acceptanceCriteria": ["<checkable criterion>"],
+      "priority": 1,
+      "passes": false
+    }
+  ]
+}
