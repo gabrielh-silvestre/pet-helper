@@ -21,7 +21,7 @@ Como uma rodada de eval vira uma mudança aceita no assistente. Cada volta do lo
 
 - A fonte da verdade é um CSV por rodada, uma linha por caso, com nota da primeira falha, categoria, rótulo humano e suíte.
 - A contagem por categoria sai de um script sobre o CSV.
-- Mover um caso entre suítes é mudar a coluna de suíte, à mão.
+- Mover um caso entre suítes é mudar o campo `suite` do arquivo do caso; o CSV da rodada é gerado e anotado por agentes, nunca editado à mão pelo dono.
 - Visualizador HTML local só entra se ler as conversas no terminal fizer falta.
 
 ## Aceitação
@@ -31,6 +31,7 @@ Como uma rodada de eval vira uma mudança aceita no assistente. Cada volta do lo
 - Uma mudança é aceita só se nenhum caso de regressão deixa de passar em 3 de 3.
 - Uma mudança é aceita só se ao menos um caso do alvo passa a 3 de 3.
 - O relatório mostra k/3 por caso.
+- A execução com uma só volta por caso é fumaça: não conta como rodada nem decide aceitação.
 - Caso que passa em 3 de 3 em rodadas seguidas pode migrar da suíte de capacidade para a de regressão.
 
 ## Execução e custo

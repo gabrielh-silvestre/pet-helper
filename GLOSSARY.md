@@ -11,7 +11,7 @@ A person who buys from the store and owns Orders; identified by a CPF.
 _Avoid_: user, client, account
 
 **Session Customer** _(cliente da sessão)_:
-The Customer the current conversation is bound to, once they have identified themselves by CPF; a conversation has no Session Customer until then.
+The Customer the current conversation is bound to, once they have identified themselves by CPF; a conversation has no Session Customer until then, and a second CPF in the same conversation is refused rather than switching it.
 _Avoid_: logged user, current user
 
 ### Orders

@@ -39,11 +39,11 @@ Agent hooks live in `.claude/settings.json` and `.claude/hooks/`: autofix lint o
 - MSC layering (Model, Service, Controller); LangGraph used directly, Deep Agents rejected.
 - Anthropic models as primary provider; Llama in Docker as the no-paid-key path for evaluators; model and endpoint configurable by environment variable.
 - Order access (ADR 0001): the Customer identifies by CPF in the conversation and an Order is shown only when that CPF owns it and the order number is given. Identity is injected by the backend, never passed as a tool argument. A missing Order and another Customer's Order collapse into one `NOT_FOUND` before the model sees them.
-- Still open, to be decided by the owner-seat critic: tracing stack, model per role, RAG search, the module map (deep modules documented by interface).
+- Architecture baseline in `docs/architecture.md` (owner-approved 2026-10-28): model per role, masked JSONL tracing, BM25 retrieval, the module map, the eval harness. Business rules live in the policies, tools return facts (ADR 0002).
 
 ## Working rules
 
-- Phase commands, in order: `/oh-my-claudecode:deep-interview --frontier` (spec, humanized copy in `docs/specs/<slug>/spec.md`), `/oh-my-claudecode:ralplan` (stops at the approved plan, never hands off to `team` or `ralph`), `/owner-seat` (not built yet), `/oh-my-claudecode:ralph` (delivery, TDD loop), `/review-pr --normal` on the worktree, `/review-pr --panel` in a fresh Herdr tab.
+- Phase commands, in order: `/oh-my-claudecode:deep-interview --frontier` (spec, humanized copy in `docs/specs/<slug>/spec.md`), `/oh-my-claudecode:ralplan` (stops at the approved plan, never hands off to `team` or `ralph`), `/owner-seat`, `/oh-my-claudecode:ralph` (delivery, TDD loop), `/review-pr --normal` on the worktree, `/review-pr --panel` in a fresh Herdr tab.
 - TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them.
 - Nothing that calls the real model runs automatically (no git hook, CI or schedule). Eval rounds are manual, show a cost estimate first and stop at US$5.
 - Commit directly on `main` while the work is docs and setup; once code delivery starts, one branch and one `wt` worktree per unit, a PR, and only the owner merges.
