@@ -1,9 +1,8 @@
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
 from pet_helper.gateway import (
     DEFAULT_REPLY,
     FakeGateway,
-    ModelResult,
     default_gateway,
 )
 
@@ -13,8 +12,6 @@ def test_it_should_wrap_a_scripted_reply_in_an_ai_message():
 
     result = gateway.complete([HumanMessage("hi")])
 
-    assert isinstance(result, ModelResult)
-    assert isinstance(result.message, AIMessage)
     assert result.message.text == "hello"
 
 

@@ -10,14 +10,14 @@ def _chat() -> int:
     while True:
         try:
             line = input("> ").strip()
+            if line:
+                print(assistant.turn("cli", line).text)
         except EOFError:
             print()
             return 0
         except KeyboardInterrupt:
             print()
             return 130
-        if line:
-            print(assistant.turn("cli", line).text)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

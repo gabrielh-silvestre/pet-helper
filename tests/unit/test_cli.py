@@ -9,6 +9,13 @@ from pet_helper.gateway import DEFAULT_REPLY, FakeGateway
 SCRIPTED_REPLY = "scripted by the test"
 
 
+class _InterruptingGateway:
+    """Simulates Ctrl-C arriving while the model call is in flight."""
+
+    def complete(self, messages, tools=()):
+        raise KeyboardInterrupt
+
+
 def _run_chat(monkeypatch, lines, gateway, exhausted=EOFError):
     """Feeds `lines` to input() and raises `exhausted` when they run out."""
     pending = iter(lines)
@@ -82,6 +89,20 @@ def test_it_should_print_a_newline_on_keyboard_interrupt(monkeypatch, capsys):
     gateway = FakeGateway(replies=[SCRIPTED_REPLY])
 
     _run_chat(monkeypatch, [], gateway, exhausted=KeyboardInterrupt)
+
+    assert capsys.readouterr().out == "\n"
+
+
+def test_it_should_exit_with_130_on_keyboard_interrupt_during_a_turn(monkeypatch):
+    code = _run_chat(monkeypatch, ["hello"], _InterruptingGateway())
+
+    assert code == 130
+
+
+def test_it_should_print_a_newline_on_keyboard_interrupt_during_a_turn(
+    monkeypatch, capsys
+):
+    _run_chat(monkeypatch, ["hello"], _InterruptingGateway())
 
     assert capsys.readouterr().out == "\n"
 

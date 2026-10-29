@@ -101,7 +101,7 @@ Os testes são escritos antes de qualquer código dos três módulos e confirmad
 - `main(["chat"])` com `input` simulado e `pet_helper.cli.default_gateway` trocado por um `FakeGateway` roteirizado, com resposta diferente de `DEFAULT_REPLY`, imprime essa resposta para cada linha com texto, ignora a linha em branco e sai com 0 e sem traceback no EOF, já `main([])` levanta `SystemExit` com código 2 (AC2).
 - Na entrada do script, `entry_points(group="console_scripts", name="pet-helper")` existe e `ep.load() is main` (AC2).
 - `default_gateway()` devolve um gateway que responde `DEFAULT_REPLY`, comportamento só do esqueleto, que a unidade do primeiro adaptador real substitui.
-- Um `conftest.py` em `tests/` define `LANGSMITH_TRACING=false` em cada teste, por fixture automática, para que nenhum teste consiga enviar rastro pela rede (AC3).
+- Um `conftest.py` em `tests/` remove `LANGCHAIN_TRACING_V2`, `LANGCHAIN_TRACING` e `LANGSMITH_TRACING_V2` e define `LANGSMITH_TRACING=false` em cada teste, por fixture automática, para que nenhum teste consiga enviar rastro pela rede (AC3). A remoção é necessária porque no `langsmith` o `TRACING_V2` é lido antes do `TRACING`, então `LANGCHAIN_TRACING_V2=true` venceria o `false`.
 
 Aceite: `uv run pytest -q` falha só nos testes novos, cada um por símbolo ausente, e os testes que já existem em `tests/harness/` seguem verdes. Ao terminar: `git add -A`.
 
@@ -138,7 +138,7 @@ Aceite (AC5, AC7): gate pré-commit verde e, depois do commit, `cz check` verde 
 | O `pyrefly` barraria um commit vermelho | Resolvido, já que não existe commit vermelho (decisão do dono) e o único commit sai com o gate completo verde |
 | O `executor` não edita `tests/`, logo um contrato mal fixado trava o verde | A seção Contratos lista nomes, assinaturas e mensagens exatas, e caso um contrato esteja errado o `test-engineer` ajusta os testes e o plano é corrigido antes do verde |
 | Os testes do esqueleto quebram na unidade seguinte, como uma checagem de "6 pacotes vazios" | Essa checagem não vira teste permanente e roda como comando único na Verificação |
-| Rastro de rede sem relação com modelo (LangSmith) durante os testes | `LANGSMITH_TRACING=false` por fixture em `tests/conftest.py` (passo 3), além do `grep` de rede na Verificação |
+| Rastro de rede sem relação com modelo (LangSmith) durante os testes | Fixture em `tests/conftest.py` (passo 3) que remove as variáveis legadas (`LANGCHAIN_TRACING_V2`, `LANGCHAIN_TRACING`, `LANGSMITH_TRACING_V2`) e define `LANGSMITH_TRACING=false`, além do `grep` de rede na Verificação |
 | Ramos novos sem teste derrubam o piso de cobertura | O vermelho cobre EOF, linha em branco e uso inválido da CLI |
 | O `pyrefly` reclama de tipos do `langgraph` | O executor ajusta a tipagem no código, e a configuração do `pyrefly` só muda se o erro vier da biblioteca, caso que vai ao critic da cadeira |
 | O `executor` escorrega para escopo extra (env de provider, trace, mais comandos) | A seção Fora de escopo delimita, e o `code-simplifier` e o `/review-pr --normal` conferem contra ela |

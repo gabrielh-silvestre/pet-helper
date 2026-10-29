@@ -5,7 +5,7 @@ from typing import Protocol
 
 from langchain_core.messages import AIMessage, BaseMessage
 
-DEFAULT_REPLY = "Hello! This is the pet-helper skeleton; I do not answer questions yet."
+DEFAULT_REPLY = "Olá! Sou o esqueleto do pet-helper e ainda não respondo perguntas."
 
 
 @dataclass(frozen=True)
