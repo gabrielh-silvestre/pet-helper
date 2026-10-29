@@ -2,7 +2,17 @@
 name = "pet-helper"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "langchain-core>=1.7.1",
+    "langgraph>=1.2.18",
+]
+
+[project.scripts]
+pet-helper = "pet_helper.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.14"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
@@ -60,3 +70,7 @@ allowed_prefixes = []
 [tool.commitizen.customize]
 # matched from the start only: the trailing $ is what rejects a body
 schema_pattern = '(feat|fix|chore|docs|test|refactor)(\([a-z0-9-]+\))?!?: \S[^\n]*\n?$'
+
+[tool.deptry]
+# the installed project is its own distribution; without this deptry reports it as a transitive dependency
+known_first_party = ["pet_helper"]

@@ -61,7 +61,7 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 | `pre-push` | A cada push: testes unitários e de integração sem modelo, com piso de 80% de cobertura em branches | ~60 s |
 | CI | A cada push na `main` e em todo PR: o `pre-commit` sobre todos os arquivos, os testes com o piso, as mensagens de commit do PR e dependências não usadas ou faltando; execuções antigas do mesmo PR são canceladas | — |
 
-- Os testes não rodam no `pre-commit`: o vermelho do TDD é commitado de propósito.
+- Os testes não rodam no `pre-commit`, já que o commit fecha uma unidade de trabalho (a spec) e nunca um passo do TDD: o vermelho fica fora do histórico, e a saída dele vai para o hexlog e o PR.
 - Nada que chame o modelo real roda de forma automática: nem gancho do git, nem CI, nem agendamento.
 - O projeto não usa teste de mutação.
 - Gancho local pode ser pulado; o CI é a barreira que não depende da máquina de quem commita.
