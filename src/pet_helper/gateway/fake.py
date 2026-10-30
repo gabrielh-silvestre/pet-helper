@@ -19,7 +19,8 @@ def _to_fake_result(item: ScriptItem) -> ModelResult:
     if isinstance(item, ModelResult):
         return item
     if isinstance(item, AIMessage):
-        return ModelResult(message=item, provider="fake", model="fake")
+        # a copy, so add_messages stamps an id on it and not on the scripted original, which a script may reuse
+        return ModelResult(message=item.model_copy(), provider="fake", model="fake")
     return ModelResult(message=AIMessage(item), provider="fake", model="fake")
 
 

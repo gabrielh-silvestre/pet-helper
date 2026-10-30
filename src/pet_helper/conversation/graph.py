@@ -16,7 +16,7 @@ from pet_helper.conversation.state import ConversationState
 from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard
 
-_HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
+HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
 _ALREADY_HANDED_OFF_REPLY = (
     "Sua conversa já foi encaminhada para um atendente humano, que dará "
     "continuidade ao atendimento."
@@ -77,7 +77,7 @@ def _route_after_output_guard(state: ConversationState) -> str:
 
 
 def _handoff_node(state: ConversationState) -> dict[str, Any]:
-    reply = _ALREADY_HANDED_OFF_REPLY if state.get("ended") else _HANDOFF_REPLY
+    reply = _ALREADY_HANDED_OFF_REPLY if state.get("ended") else HANDOFF_REPLY
     return {
         "messages": [AIMessage(reply)],
         "ended": True,

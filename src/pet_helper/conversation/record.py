@@ -15,6 +15,8 @@ from pet_helper.orders.models import ORDER_NUMBER_PATTERN
 
 _ORDER_TOOL = "get_order"
 _ESCALATE_TOOL = "escalate_to_human"
+_STEP_FAILURE_LIMIT = 3
+TOOL_ROUNDS_CAP = 8
 
 
 def _latest_tool_round(
@@ -54,6 +56,13 @@ def _order_step_outcome(
     return None
 
 
+def _repeated_failure_cause(failures: dict[str, int], tool_rounds: int) -> str | None:
+    for step, count in failures.items():
+        if count >= _STEP_FAILURE_LIMIT:
+            return f"step:{step}"
+    return "loop_cap" if tool_rounds >= TOOL_ROUNDS_CAP else None
+
+
 def record_node(state: ConversationState) -> dict[str, Any]:
     results, args_by_call_id = _latest_tool_round(state.get("messages", []))
     failures = dict(state.get("failures") or {})
@@ -72,17 +81,22 @@ def record_node(state: ConversationState) -> dict[str, Any]:
         )
         if outcome is not None:
             failures, counted = record_step_outcome(failures, counted, *outcome)
-    escalation = (
-        {
-            "escalation": highest_priority_reason(reasons),
-            "escalation_cause": _ESCALATE_TOOL,
+    tool_rounds = state.get("tool_rounds", 0) + 1
+    failure_cause = _repeated_failure_cause(failures, tool_rounds)
+    if failure_cause is not None:
+        reasons.append("repeated_failure")
+    escalation = {}
+    if reasons:
+        reason = highest_priority_reason(reasons)
+        escalation = {
+            "escalation": reason,
+            "escalation_cause": failure_cause
+            if reason == "repeated_failure" and failure_cause is not None
+            else _ESCALATE_TOOL,
         }
-        if reasons
-        else {}
-    )
     return {
         **escalation,
-        "tool_rounds": state.get("tool_rounds", 0) + 1,
+        "tool_rounds": tool_rounds,
         "retrieved": tuple(hits),
         "failures": failures,
         "steps_counted": counted,

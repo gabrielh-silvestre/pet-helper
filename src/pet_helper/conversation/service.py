@@ -3,11 +3,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
 from pet_helper.catalog import Catalog
-from pet_helper.conversation.graph import build_graph
+from pet_helper.conversation.graph import HANDOFF_REPLY, build_graph
 from pet_helper.conversation.state import EscalationReason
 from pet_helper.conversation.tools import ToolRegistry, build_tool_registry
 from pet_helper.gateway import ModelGateway, build_gateway
@@ -18,6 +20,8 @@ from pet_helper.orders.api import MockOrderApi
 
 KIT_DIR_ENV = "PET_HELPER_KIT_DIR"
 DEFAULT_KIT_DIR = "kit"
+# backstop only: well above the tool_rounds cap (3 supersteps per round)
+RECURSION_LIMIT = 60
 
 
 class KitError(RuntimeError):
@@ -67,8 +71,24 @@ class Assistant:
         return self._graph
 
     def turn(self, session_id: str, text: str) -> Reply:
-        config: RunnableConfig = {"configurable": {"thread_id": session_id}}
-        state = self._graph.invoke({"user_text": text}, config)
+        config: RunnableConfig = {
+            "configurable": {"thread_id": session_id},
+            "recursion_limit": RECURSION_LIMIT,
+        }
+        try:
+            state = self._graph.invoke({"user_text": text}, config)
+        except GraphRecursionError:
+            self._graph.update_state(
+                config,
+                {
+                    "messages": [AIMessage(HANDOFF_REPLY)],
+                    "escalation": "repeated_failure",
+                    "escalation_cause": "recursion_limit",
+                    "ended": True,
+                },
+                as_node="handoff",
+            )
+            state = self._graph.get_state(config).values
         last_message = state["messages"][-1]
         return Reply(
             text=str(last_message.text),
