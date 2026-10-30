@@ -13,6 +13,8 @@ from pet_helper.gateway import (
     AnthropicGateway,
     FakeGateway,
     ModelConfigError,
+    ModelResult,
+    ModelUnavailable,
     OllamaGateway,
 )
 
@@ -255,6 +257,73 @@ def test_it_should_end_the_session_with_zero_after_an_escalated_turn(monkeypatch
     )
 
     assert code == 0
+
+
+def test_it_should_leave_stderr_empty_after_a_business_escalation(monkeypatch, capsys):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+
+    _run_chat(monkeypatch, ["Quero falar com um atendente"], gateway)
+
+    assert capsys.readouterr().err == ""
+
+
+def test_it_should_exit_with_one_when_the_model_is_unavailable(monkeypatch):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert code == 1
+
+
+def test_it_should_print_the_model_unavailable_cause_on_stderr(monkeypatch, capsys):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert "model_unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "setting", ["PET_HELPER_PROVIDER", "ANTHROPIC_API_KEY", "OLLAMA_BASE_URL"]
+)
+def test_it_should_hint_at_the_provider_setting_when_the_model_is_unavailable(
+    monkeypatch, capsys, setting
+):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert setting in capsys.readouterr().err
+
+
+def test_it_should_keep_the_escalation_marker_on_stdout_when_the_model_is_unavailable(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert "[escalonado: repeated_failure]" in capsys.readouterr().out.splitlines()
+
+
+def test_it_should_exit_with_zero_when_the_model_refuses(monkeypatch):
+    gateway = FakeGateway([ModelResult(message=AIMessage(""), refused=True)])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert code == 0
+
+
+def test_it_should_print_the_refusal_cause_on_stderr_without_the_provider_hint(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelResult(message=AIMessage(""), refused=True)])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    stderr = capsys.readouterr().err
+    assert "refusal" in stderr
+    assert "PET_HELPER_PROVIDER" not in stderr
 
 
 def test_it_should_not_read_another_line_after_an_escalated_turn(monkeypatch):

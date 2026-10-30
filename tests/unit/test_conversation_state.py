@@ -4,8 +4,9 @@ from typing import Any, get_args, get_origin, get_type_hints
 
 import pytest
 
-import pet_helper.conversation as conversation
 from pet_helper.catalog import Catalog
+from pet_helper.conversation.graph import build_graph
+from pet_helper.conversation.state import ConversationState, record_step_outcome
 from pet_helper.gateway import FakeGateway
 from pet_helper.guard import Guard
 from pet_helper.knowledge import PolicyHit
@@ -29,7 +30,7 @@ REQUIRED_STATE_FIELDS = {
 
 
 def _reducer_for(field_name: str) -> Callable[[Any, Any], Any]:
-    hints = get_type_hints(conversation.ConversationState, include_extras=True)
+    hints = get_type_hints(ConversationState, include_extras=True)
     annotation = hints[field_name]
     metadata = getattr(annotation, "__metadata__", ())
     assert metadata, f"{field_name} has no reducer metadata on ConversationState"
@@ -41,7 +42,7 @@ def _reducer_for(field_name: str) -> Callable[[Any, Any], Any]:
 def _retrieved_sequence(
     items: list[PolicyHit],
 ) -> tuple[PolicyHit, ...] | list[PolicyHit]:
-    hints = get_type_hints(conversation.ConversationState, include_extras=True)
+    hints = get_type_hints(ConversationState, include_extras=True)
     value_type = get_args(hints["retrieved"])[0]
     if get_origin(value_type) is tuple:
         return tuple(items)
@@ -49,7 +50,7 @@ def _retrieved_sequence(
 
 
 def test_it_should_declare_every_required_field_on_conversation_state():
-    hints = get_type_hints(conversation.ConversationState, include_extras=True)
+    hints = get_type_hints(ConversationState, include_extras=True)
 
     declared_fields = set(hints)
 
@@ -167,14 +168,14 @@ def test_it_should_set_escalation_cause_once_without_overwriting():
 
 
 def test_it_should_increment_a_step_failure_at_most_once_per_turn():
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         {"identification": 1},
         frozenset(),
         "order_lookup",
         succeeded=False,
     )
 
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         failures,
         steps_counted,
         "order_lookup",
@@ -187,14 +188,14 @@ def test_it_should_increment_a_step_failure_at_most_once_per_turn():
 
 
 def test_it_should_reset_a_step_counter_to_zero_when_a_later_round_succeeds():
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         {"order_lookup": 1},
         frozenset(),
         "order_lookup",
         succeeded=False,
     )
 
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         failures,
         steps_counted,
         "order_lookup",
@@ -206,20 +207,20 @@ def test_it_should_reset_a_step_counter_to_zero_when_a_later_round_succeeds():
 
 
 def test_it_should_not_reincrement_a_step_in_the_same_turn_after_a_resetting_success():
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         {},
         frozenset(),
         "order_lookup",
         succeeded=False,
     )
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         failures,
         steps_counted,
         "order_lookup",
         succeeded=True,
     )
 
-    failures, steps_counted = conversation.record_step_outcome(
+    failures, steps_counted = record_step_outcome(
         failures,
         steps_counted,
         "order_lookup",
@@ -232,9 +233,7 @@ def test_it_should_not_reincrement_a_step_in_the_same_turn_after_a_resetting_suc
 
 def test_it_should_reset_per_turn_values_in_input_gate_while_preserving_failures():
     guard = Guard(Catalog(CATALOG_CSV))
-    graph = conversation.build_graph(
-        FakeGateway(["Bom dia! Como posso ajudar?"]), guard
-    )
+    graph = build_graph(FakeGateway(["Bom dia! Como posso ajudar?"]), guard)
     config = {"configurable": {"thread_id": "turn-reset-session"}}
     graph.update_state(
         config,

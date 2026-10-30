@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -231,6 +232,24 @@ def _parse_dockerfile() -> _ParsedDockerfile:
     )
 
 
+def _readme_sections() -> list[tuple[str, str]]:
+    readme = _load_readme()
+    sections: list[tuple[str, str]] = []
+    for match in re.finditer(r"^(#{2,4})\s+(.+)$", readme, re.MULTILINE):
+        level = len(match.group(1))
+        heading = match.group(2).strip()
+        tail = readme[match.end() :]
+        next_heading = re.search(rf"^#{{1,{level}}}\s+", tail, re.MULTILINE)
+        body = tail[: next_heading.start()] if next_heading else tail
+        sections.append((heading, re.sub(r"\\\n\s*", " ", body)))
+    return sections
+
+
+def _kit_reference_date() -> str:
+    kit_orders = json.loads((ROOT / "kit" / "orders.json").read_text(encoding="utf-8"))
+    return kit_orders["reference_date"]
+
+
 def _load_readme() -> str:
     assert README_PATH.is_file(), "README.md does not exist"
     return README_PATH.read_text(encoding="utf-8")
@@ -339,19 +358,9 @@ def test_it_should_resolve_the_copied_kit_directory_inside_the_container():
 
 
 def test_it_should_document_docker_compose_run_in_a_no_key_readme_section():
-    readme = _load_readme()
-
-    sections: list[tuple[str, str]] = []
-    for match in re.finditer(r"^(#{2,4})\s+(.+)$", readme, re.MULTILINE):
-        level = len(match.group(1))
-        heading = match.group(2).strip()
-        tail = readme[match.end() :]
-        next_heading = re.search(rf"^#{{1,{level}}}\s+", tail, re.MULTILINE)
-        body = tail[: next_heading.start()] if next_heading else tail
-        sections.append((heading, re.sub(r"\\\n\s*", " ", body)))
     matching_sections = [
         heading
-        for heading, body in sections
+        for heading, body in _readme_sections()
         if NO_KEY_HEADING_PATTERN.search(heading)
         and re.search(r"\bdocker\s+compose\s+run\b[^\n]*\bapp\b", body)
     ]
@@ -375,3 +384,52 @@ def test_it_should_include_the_built_with_llama_attribution_in_the_readme():
     has_attribution = "Built with Llama" in readme
 
     assert has_attribution is True
+
+
+def test_it_should_default_pet_helper_today_to_the_kit_reference_date_on_the_app_service():
+    compose = _load_compose()
+    app = _service(compose, "app")
+
+    env = _env_map(app)
+
+    assert env.get("PET_HELPER_TODAY") == _kit_reference_date()
+
+
+def test_it_should_let_the_host_override_pet_helper_today_on_the_app_service():
+    compose = _load_compose()
+    app = _service(compose, "app")
+
+    raw_value = _raw_env_map(app).get("PET_HELPER_TODAY", "")
+
+    match = COMPOSE_DEFAULT_PATTERN.match(raw_value)
+    assert match is not None
+    assert match.group(1) == "PET_HELPER_TODAY"
+
+
+def test_it_should_document_the_native_chat_command_with_the_kit_reference_date_in_the_readme():
+    readme = _load_readme()
+
+    command = f"PET_HELPER_TODAY={_kit_reference_date()} uv run pet-helper chat"
+
+    assert command in readme
+
+
+@pytest.mark.parametrize(
+    "variable", ["PET_HELPER_PROVIDER", "ANTHROPIC_API_KEY", "OLLAMA_BASE_URL"]
+)
+def test_it_should_list_the_provider_variables_in_the_native_setup_section(variable):
+    native_sections = [
+        body
+        for heading, body in _readme_sections()
+        if re.search(r"\bnativo\b", heading, re.IGNORECASE)
+    ]
+
+    assert any(variable in body for body in native_sections)
+
+
+def test_it_should_tell_the_reader_to_run_the_command_again_after_a_model_unavailable_failure():
+    readme = _load_readme()
+
+    mentions_failure = "model_unavailable" in readme
+
+    assert mentions_failure is True

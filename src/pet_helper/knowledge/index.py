@@ -5,10 +5,9 @@ from pathlib import Path
 import bm25s
 import Stemmer  # pyrefly: ignore[missing-import]
 
-from pet_helper.text import fold_text
+from pet_helper.text import PORTUGUESE_STOPWORDS, fold_text
 
 _H1_PATTERN = re.compile(r"^#\s+(.+)$", re.MULTILINE)
-_STOPWORDS = sorted({fold_text(word) for word in bm25s.stopwords.STOPWORDS_PORTUGUESE})
 _STEMMER = Stemmer.Stemmer("portuguese")
 
 
@@ -51,7 +50,7 @@ class PolicyIndex:
         documents = [_load_document(path) for path in sorted(directory.glob("*.md"))]
         corpus_tokens = bm25s.tokenize(
             [fold_text(doc.text) for doc in documents],
-            stopwords=_STOPWORDS,
+            stopwords=PORTUGUESE_STOPWORDS,
             stemmer=_STEMMER,
             show_progress=False,
         )
@@ -62,7 +61,7 @@ class PolicyIndex:
     def search(self, query: str, k: int = 2) -> list[PolicyHit]:
         query_tokens = bm25s.tokenize(
             [fold_text(query)],
-            stopwords=_STOPWORDS,
+            stopwords=PORTUGUESE_STOPWORDS,
             stemmer=_STEMMER,
             show_progress=False,
         )

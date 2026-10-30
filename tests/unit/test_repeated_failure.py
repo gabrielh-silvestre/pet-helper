@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from pet_helper.gateway import (
     ModelUnavailable,
 )
 from pet_helper.orders.api import FAILURE_ENV
+from tests.unit.graph_access import graph_of
 
 REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 SESSION_ID = "session-repeated-failure"
@@ -65,8 +67,8 @@ def _config() -> dict[str, Any]:
     return {"configurable": {"thread_id": SESSION_ID}}
 
 
-def _state(assistant: Assistant) -> dict[str, Any]:
-    return assistant.graph.get_state(_config()).values
+def _state(assistant: Assistant) -> Mapping[str, Any]:
+    return assistant.snapshot(SESSION_ID)
 
 
 def _failing_script(step: str, turns: int) -> list[AIMessage | str]:
@@ -106,18 +108,18 @@ def _looping_assistant() -> tuple[Assistant, FakeGateway]:
 
 
 def _with_recursion_limit(assistant: Assistant, monkeypatch, limit: int) -> None:
-    original = assistant.graph.invoke
+    original = graph_of(assistant).invoke
 
     def invoke(graph_input, config=None, **kwargs):
         return original(
             graph_input, {**(config or {}), "recursion_limit": limit}, **kwargs
         )
 
-    monkeypatch.setattr(assistant.graph, "invoke", invoke)
+    monkeypatch.setattr(graph_of(assistant), "invoke", invoke)
 
 
 def _visited_nodes(assistant: Assistant, text: str) -> list[str]:
-    chunks = assistant.graph.stream(
+    chunks = graph_of(assistant).stream(
         {"user_text": text}, _config(), stream_mode="updates"
     )
     return [node for chunk in chunks for node in chunk]
@@ -490,6 +492,78 @@ def test_it_should_go_from_agent_straight_to_handoff_on_a_refusal():
     visited = _visited_nodes(assistant, "Qual o prazo de entrega?")
 
     assert visited == ["input_gate", "input_guard", "agent", "handoff"]
+
+
+def _truncated(message: AIMessage) -> ModelResult:
+    return ModelResult(message=message, truncated=True)
+
+
+def test_it_should_escalate_with_repeated_failure_on_a_truncated_reply():
+    gateway = FakeGateway([_truncated(AIMessage("O prazo de entrega é de 3 di"))])
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    reply = assistant.turn(SESSION_ID, "Qual o prazo de entrega?")
+
+    assert reply.escalation == "repeated_failure"
+    assert _state(assistant)["escalation_cause"] == "truncated_reply"
+
+
+def test_it_should_escalate_on_a_truncated_reply_that_carries_tool_calls():
+    gateway = FakeGateway(
+        [_truncated(_tool_call_message(("search_policies", {"query": "fre"})))]
+    )
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    reply = assistant.turn(SESSION_ID, "Qual o prazo de entrega?")
+
+    assert reply.escalation == "repeated_failure"
+    assert _state(assistant)["escalation_cause"] == "truncated_reply"
+
+
+def test_it_should_not_regenerate_a_truncated_reply_through_the_output_guard():
+    gateway = FakeGateway([_truncated(AIMessage("Recomendo o produto PX-9999."))])
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    assistant.turn(SESSION_ID, "Quais produtos vocês recomendam?")
+
+    assert len(gateway.calls) == 1
+    assert _state(assistant)["escalation_cause"] == "truncated_reply"
+
+
+EMPTY_REPLIES = {
+    "empty_text": AIMessage(""),
+    "blank_text": AIMessage("  \n "),
+    "thinking_only": AIMessage(
+        content=[{"type": "thinking", "thinking": "Hmm.", "signature": "sig"}]
+    ),
+}
+
+
+@pytest.mark.parametrize("empty_reply", EMPTY_REPLIES.values(), ids=EMPTY_REPLIES)
+def test_it_should_escalate_with_repeated_failure_on_a_reply_without_text_and_tool_calls(
+    empty_reply,
+):
+    assistant = conversation.build_assistant(gateway=FakeGateway([empty_reply]))
+
+    reply = assistant.turn(SESSION_ID, "Qual o prazo de entrega?")
+
+    assert reply.escalation == "repeated_failure"
+    assert _state(assistant)["escalation_cause"] == "empty_reply"
+
+
+def test_it_should_go_on_to_the_tools_when_a_reply_without_text_carries_tool_calls():
+    gateway = FakeGateway(
+        [
+            _tool_call_message(("search_policies", {"query": "frete"})),
+            "O prazo é de 3 dias úteis.",
+        ]
+    )
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    reply = assistant.turn(SESSION_ID, "Qual o prazo de entrega?")
+
+    assert reply.text == "O prazo é de 3 dias úteis."
+    assert reply.escalation is None
 
 
 def test_it_should_escalate_with_repeated_failure_when_the_model_is_unavailable():

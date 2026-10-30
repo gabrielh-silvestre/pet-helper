@@ -1,4 +1,4 @@
-from pet_helper.catalog.models import Product
+from pet_helper.catalog.models import SKU_PATTERN, Product
 from pet_helper.catalog.search import Catalog
 
-__all__ = ["Catalog", "Product"]
+__all__ = ["SKU_PATTERN", "Catalog", "Product"]

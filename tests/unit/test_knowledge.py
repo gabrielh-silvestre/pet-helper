@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 
+from pet_helper import text
 from pet_helper.knowledge import PolicyHit, PolicyIndex
+from pet_helper.knowledge import index as knowledge_index
 
 KIT_POLICIES = Path(__file__).resolve().parents[2] / "kit" / "policies"
 
@@ -171,3 +173,7 @@ def test_it_should_find_a_newly_added_policy_file_after_reloading(tmp_path):
     assert [(hit.source, hit.title) for hit in after] == [
         ("brinde.md", "Brinde de aniversário")
     ]
+
+
+def test_it_should_use_the_shared_portuguese_stopwords_constant():
+    assert knowledge_index.PORTUGUESE_STOPWORDS is text.PORTUGUESE_STOPWORDS

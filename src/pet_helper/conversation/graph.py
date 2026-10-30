@@ -15,6 +15,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt.tool_node import ToolInvocationError
 
 from pet_helper.conversation.prompt import SYSTEM_PROMPT
 from pet_helper.conversation.record import record_node
@@ -23,6 +24,16 @@ from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard, extract_skus
 
 HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
+CPF_CONFLICT_REPLY = (
+    "Já identifiquei esta conversa com outro CPF e não posso trocar de identificação "
+    "no meio do atendimento. Para consultar dados de outro cliente, inicie uma nova "
+    "conversa."
+)
+_TOOL_FAILURE_TEXT = (
+    "A ferramenta falhou de forma inesperada. Diga ao cliente que não conseguiu "
+    "concluir a consulta agora."
+)
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
 _ALREADY_HANDED_OFF_REPLY = (
     "Sua conversa já foi encaminhada para um atendente humano, que dará "
     "continuidade ao atendimento."
@@ -43,6 +54,17 @@ def _repeated_failure(cause: str) -> dict[str, Any]:
     return {"escalation": "repeated_failure", "escalation_cause": cause}
 
 
+def _tool_error_text(error: Exception) -> str:
+    # só o erro de argumentos é seguro para o modelo; o resto pode trazer URL ou CPF
+    if isinstance(error, ToolInvocationError):
+        return error.message
+    return _TOOL_FAILURE_TEXT
+
+
+def _conflicts_with(session_cpf: str | None, new_cpf: str | None) -> bool:
+    return session_cpf is not None and new_cpf is not None and session_cpf != new_cpf
+
+
 def _input_gate_node(state: ConversationState) -> dict[str, Any]:
     return {
         "tool_rounds": 0,
@@ -58,6 +80,10 @@ def _route_after_input_gate(state: ConversationState) -> str:
     if state.get("ended"):
         return "handoff"
     return "input_guard"
+
+
+def _route_after_input_guard(state: ConversationState) -> str:
+    return "cpf_conflict" if state.get("cpf_conflict") else "agent"
 
 
 def _route_after_agent(state: ConversationState) -> str:
@@ -103,16 +129,34 @@ def _corrective_text(
     )
 
 
-def _without_regeneration(messages: Sequence[BaseMessage]) -> list[RemoveMessage]:
+def _without_thinking(message: AIMessage) -> AIMessage:
+    if not isinstance(message.content, list):
+        return message
+    kept = [
+        block
+        for block in message.content
+        if not (isinstance(block, dict) and block.get("type") in _THINKING_BLOCK_TYPES)
+    ]
+    return message.model_copy(update={"content": kept})
+
+
+def _without_regeneration(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
     ids = [message.id for message in messages]
     if _CORRECTIVE_MESSAGE_ID not in ids:
         return []
     corrective_index = ids.index(_CORRECTIVE_MESSAGE_ID)
-    return [
+    removals = [
         RemoveMessage(id=message.id)
         for message in messages[corrective_index - 1 : corrective_index + 1]
         if message.id is not None
     ]
+    # o thinking da resposta regenerada não pode seguir no histórico: o provedor valida a assinatura
+    stripped = [
+        _without_thinking(message)
+        for message in messages[corrective_index + 1 :]
+        if isinstance(message, AIMessage)
+    ]
+    return [*removals, *stripped]
 
 
 def handoff_state(reply: str, cause: str | None = None) -> dict[str, Any]:
@@ -142,8 +186,12 @@ def build_graph(
             "messages": [HumanMessage(verdict.model_text)],
             "user_text": "",
             "session_cpf": verdict.cpf,
+            "cpf_conflict": _conflicts_with(state.get("session_cpf"), verdict.cpf),
             "injection_suspected": verdict.injection_suspected,
         }
+
+    def cpf_conflict_node(_state: ConversationState) -> dict[str, Any]:
+        return {"messages": [AIMessage(CPF_CONFLICT_REPLY)]}
 
     def agent_node(state: ConversationState) -> dict[str, Any]:
         try:
@@ -155,6 +203,10 @@ def build_graph(
             return _repeated_failure("model_unavailable")
         if result.refused:
             return _repeated_failure("refusal")
+        if result.truncated:
+            return _repeated_failure("truncated_reply")
+        if not result.message.tool_calls and not result.message.text.strip():
+            return _repeated_failure("empty_reply")
         return {"messages": [result.message]}
 
     def output_guard_node(state: ConversationState) -> dict[str, Any]:
@@ -184,8 +236,9 @@ def build_graph(
     builder = StateGraph(ConversationState)
     builder.add_node("input_gate", _input_gate_node)
     builder.add_node("input_guard", input_guard_node)
+    builder.add_node("cpf_conflict", cpf_conflict_node)
     builder.add_node("agent", agent_node)
-    builder.add_node("tools", ToolNode(tools, handle_tool_errors=True))
+    builder.add_node("tools", ToolNode(tools, handle_tool_errors=_tool_error_text))
     builder.add_node("record", record_node)
     builder.add_node("output_guard", output_guard_node)
     builder.add_node("handoff", _handoff_node)
@@ -196,7 +249,12 @@ def build_graph(
         _route_after_input_gate,
         {"input_guard": "input_guard", "handoff": "handoff"},
     )
-    builder.add_edge("input_guard", "agent")
+    builder.add_conditional_edges(
+        "input_guard",
+        _route_after_input_guard,
+        {"agent": "agent", "cpf_conflict": "cpf_conflict"},
+    )
+    builder.add_edge("cpf_conflict", END)
     builder.add_conditional_edges(
         "agent",
         _route_after_agent,

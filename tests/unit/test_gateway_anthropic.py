@@ -143,6 +143,16 @@ def test_it_should_configure_max_retries_to_one_on_the_anthropic_chat_model(
     assert chat_model.max_retries == 1
 
 
+def test_it_should_configure_a_request_timeout_on_the_anthropic_chat_model(
+    monkeypatch,
+):
+    from pet_helper.gateway.anthropic import REQUEST_TIMEOUT_SECONDS
+
+    chat_model = _build_chat_model(monkeypatch)
+
+    assert chat_model.default_request_timeout == REQUEST_TIMEOUT_SECONDS
+
+
 def test_it_should_default_output_config_effort_to_low_in_the_payload(monkeypatch):
     chat_model = _build_chat_model(monkeypatch)
 
@@ -233,6 +243,30 @@ def test_it_should_mark_refused_true_when_stop_reason_is_refusal():
     assert result.provider == "anthropic"
     assert result.refused is True
     assert result.fell_back is False
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "expected_truncated"),
+    [
+        ("max_tokens", True),
+        ("model_context_window_exceeded", True),
+        ("end_turn", False),
+        ("tool_use", False),
+    ],
+)
+def test_it_should_mark_truncated_only_when_the_stop_reason_cut_the_reply_short(
+    stop_reason, expected_truncated
+):
+    message = AIMessage(
+        content="partial", response_metadata={"stop_reason": stop_reason}
+    )
+    gateway = AnthropicGateway(
+        chat_model=FakeMessagesListChatModel(responses=[message])
+    )
+
+    result = gateway.complete([HumanMessage("olá")])
+
+    assert result.truncated is expected_truncated
 
 
 def test_it_should_raise_model_config_error_on_http_400_bad_request():

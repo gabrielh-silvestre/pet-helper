@@ -20,6 +20,7 @@ class ModelResult:
     model: str = ""
     fell_back: bool = False
     refused: bool = False
+    truncated: bool = False
 
 
 class ModelGateway(Protocol):

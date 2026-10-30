@@ -117,4 +117,7 @@ class OrderService:
                 self._trace_hook(not_found_reason)
             return NotFound()
 
+        if response.status != 200:
+            return Unavailable()
+
         return Found(_build_order_view(response.body, self._clock.today()))

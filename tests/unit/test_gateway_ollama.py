@@ -353,3 +353,69 @@ def test_it_should_pass_a_request_timeout_to_the_ollama_client():
     chat_model = _build_default_chat_model()
 
     assert chat_model.client_kwargs.get("timeout") is not None
+
+
+def _read_timeout() -> httpx.ReadTimeout:
+    return httpx.ReadTimeout(
+        "timed out", request=httpx.Request("POST", "http://localhost:11434")
+    )
+
+
+def test_it_should_retry_once_and_return_the_result_when_the_first_attempt_fails():
+    chat_model = _mock_ollama_chat_model()
+    chat_model.invoke.side_effect = [_read_timeout(), AIMessage(content="hi")]
+    gateway = OllamaGateway(chat_model=chat_model)
+
+    result = gateway.complete([HumanMessage("hello")])
+
+    assert result.provider == "ollama"
+    assert chat_model.invoke.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _read_timeout(),
+        ConnectionError("connection refused"),
+        ollama.ResponseError("server error", 500),
+    ],
+    ids=["read-timeout", "builtin-connection-error", "http-500"],
+)
+def test_it_should_give_up_with_model_unavailable_after_two_failed_attempts(error):
+    chat_model = _mock_ollama_chat_model()
+    chat_model.invoke.side_effect = [error, error]
+    gateway = OllamaGateway(chat_model=chat_model)
+
+    with pytest.raises(ModelUnavailable):
+        gateway.complete([HumanMessage("hello")])
+
+    assert chat_model.invoke.call_count == 2
+
+
+def test_it_should_not_retry_a_client_error_response():
+    chat_model = _mock_ollama_chat_model()
+    chat_model.invoke.side_effect = ollama.ResponseError("model not found", 404)
+    gateway = OllamaGateway(chat_model=chat_model)
+
+    with pytest.raises(ModelConfigError):
+        gateway.complete([HumanMessage("hello")])
+
+    assert chat_model.invoke.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("done_reason", "expected_truncated"),
+    [("length", True), ("stop", False)],
+)
+def test_it_should_mark_truncated_only_when_the_done_reason_is_length(
+    done_reason, expected_truncated
+):
+    chat_model = _mock_ollama_chat_model()
+    chat_model.invoke.return_value = AIMessage(
+        content="partial", response_metadata={"done_reason": done_reason}
+    )
+    gateway = OllamaGateway(chat_model=chat_model)
+
+    result = gateway.complete([HumanMessage("hello")])
+
+    assert result.truncated is expected_truncated

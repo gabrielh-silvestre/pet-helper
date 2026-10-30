@@ -27,6 +27,7 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       PET_HELPER_PROVIDER: ollama
+      PET_HELPER_TODAY: ${PET_HELPER_TODAY:-2026-11-03}
       PET_HELPER_OLLAMA_MODEL: ${PET_HELPER_OLLAMA_MODEL:-llama3.1:8b}
     stdin_open: true
     tty: true

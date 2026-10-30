@@ -99,18 +99,24 @@ def _make_search_catalog(catalog: Catalog) -> BaseTool:
         species: Literal["cão", "gato"] | None = None,
         category: Literal["ração", "areia", "brinquedo", "acessório"] | None = None,
     ) -> tuple[str, list[Product]]:
-        """Search the product catalog by name, optionally filtered by species and category.
+        """Search the product catalog by product name or type.
 
-        species is cão or gato and also matches products made for both; category is
-        ração, areia, brinquedo or acessório.
-        Returns SKU, name, category, species, price and whether it is in stock.
+        query: only words of the product name or type (brand, flavor, "ração",
+        "coleira"); put species and category in their own parameters, never in
+        query. species is cão or gato and also matches products made for both;
+        category is ração, areia, brinquedo or acessório.
+        Returns name_matched and the products (SKU, name, category, species,
+        price, in stock). When name_matched is false, no product has that name:
+        say you did not find it and offer the listed ones as alternatives,
+        never presenting one of them as the product asked for.
         """
-        products = catalog.search(query, species=species, category=category)
+        outcome = catalog.search_with_match(query, species=species, category=category)
         listed = [
             product.model_dump(mode="json", include=_PRODUCT_FIELDS)
-            for product in products
+            for product in outcome.products
         ]
-        return _to_json({"products": listed}), products
+        payload = {"products": listed, "name_matched": outcome.name_matched}
+        return _to_json(payload), outcome.products
 
     return search_catalog
 

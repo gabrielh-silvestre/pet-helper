@@ -11,6 +11,18 @@ CATALOG_CSV = Path(__file__).resolve().parents[2] / "kit" / "catalog.csv"
 TRACE_SALT_ENV = "PET_HELPER_TRACE_SALT"
 CPF_PSEUDONYM_PATTERN = re.compile(r"cpf#[0-9a-f]{8}")
 
+TOLERANT_CPF_FORMATS = [
+    "529 982 247 25",
+    "529 982 24725",
+    "529.982.247.25",
+    "529.982.247\u201325",
+    "529\u2014982\u2014247\u201425",
+    "529-982-247-25",
+    "529\t982\t247\t25",
+    "529.982-247 25",
+    "\uff15\uff12\uff19 \uff19\uff18\uff12 \uff12\uff14\uff17 \uff12\uff15",
+]
+
 RETRIEVED_CITATION_VARIANTS = [
     "Fonte: Troca e devolução.",
     "**Fonte: Troca e devolução**",
@@ -36,6 +48,8 @@ def guard(catalog) -> Guard:
     [
         ("529.982.247-25", "52998224725"),
         ("52998224725", "52998224725"),
+        ("000-000-001-91", "00000000191"),
+        *[(raw_cpf, "52998224725") for raw_cpf in TOLERANT_CPF_FORMATS],
     ],
 )
 def test_it_should_extract_a_normalized_cpf_while_replacing_it_in_model_text(
@@ -53,14 +67,31 @@ def test_it_should_extract_a_normalized_cpf_while_replacing_it_in_model_text(
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Meu telefone é 47 99999-1234.",
+        "Nasci em 2024-05-12.",
+        "O código é 5299822472512.",
+    ],
+)
+def test_it_should_leave_numbers_that_are_not_cpf_shaped_untouched_in_model_text(
+    guard, text
+):
+    verdict = guard.inspect_input(text)
+
+    assert verdict == InputVerdict(model_text=text, cpf=None, injection_suspected=False)
+
+
+@pytest.mark.parametrize(
     "invalid_cpf",
     [
         "529.982.247-26",
         "52998224726",
         "111.111.111-11",
+        "529 982 247 26",
     ],
 )
-def test_it_should_reject_wrong_check_digits_while_still_replacing_the_cpf_in_model_text(
+def test_it_should_reject_wrong_check_digits_while_marking_the_cpf_as_invalid_in_model_text(
     guard, invalid_cpf
 ):
     text = f"Meu CPF é {invalid_cpf}."
@@ -68,8 +99,22 @@ def test_it_should_reject_wrong_check_digits_while_still_replacing_the_cpf_in_mo
     verdict = guard.inspect_input(text)
 
     assert verdict == InputVerdict(
-        model_text="Meu CPF é [CPF informado].",
+        model_text="Meu CPF é [CPF inválido].",
         cpf=None,
+        injection_suspected=False,
+    )
+
+
+def test_it_should_mark_each_cpf_by_its_own_validity_when_a_message_has_a_valid_and_an_invalid_one(
+    guard,
+):
+    text = "Errei 529.982.247-26, o certo é 529.982.247-25."
+
+    verdict = guard.inspect_input(text)
+
+    assert verdict == InputVerdict(
+        model_text="Errei [CPF inválido], o certo é [CPF informado].",
+        cpf="52998224725",
         injection_suspected=False,
     )
 
@@ -223,6 +268,8 @@ def test_it_should_flag_only_the_unretrieved_line_when_a_reply_cites_two_sources
         "52998224725",
         "529.982.247-26",
         "111.111.111-11",
+        "000-000-001-91",
+        *TOLERANT_CPF_FORMATS,
     ],
 )
 def test_it_should_mask_any_cpf_shaped_number_into_a_hex_pseudonym(guard, raw_cpf):
@@ -281,6 +328,13 @@ def test_it_should_replace_phone_numbers_when_masking(guard):
 
     assert "98888-7777" not in masked
     assert "988887777" not in masked
+
+
+def test_it_should_mask_a_phone_number_that_is_not_cpf_shaped_as_a_phone(guard):
+    masked = guard.mask("Ligue para 47 99999-1234 hoje.")
+
+    assert "[telefone]" in masked
+    assert CPF_PSEUDONYM_PATTERN.search(masked) is None
 
 
 def test_it_should_mask_an_11_digit_cpf_before_the_phone_recognizer_matches_it(guard):

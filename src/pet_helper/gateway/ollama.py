@@ -18,6 +18,8 @@ DEFAULT_NUM_CTX = 8192
 DEFAULT_TEMPERATURE = 0
 # the client default is no timeout, which hangs the turn when the server stalls
 REQUEST_TIMEOUT_SECONDS = 120
+# a cold model often times out on the first call and answers the second
+MAX_ATTEMPTS = 2
 
 
 def _normalize_message(message: BaseMessage) -> BaseMessage:
@@ -29,6 +31,20 @@ def _normalize_message(message: BaseMessage) -> BaseMessage:
             tool_calls=list(message.tool_calls),
         )
     return message.model_copy(update={"content": str(message.text)})
+
+
+def _invoke_with_retry(runnable: Any, messages: list[BaseMessage]) -> AIMessage:
+    last_error: Exception
+    for _ in range(MAX_ATTEMPTS):
+        try:
+            return runnable.invoke(messages)
+        except (httpx.ConnectError, httpx.TimeoutException, ConnectionError) as exc:
+            last_error = exc
+        except ollama.ResponseError as exc:
+            if 400 <= exc.status_code < 500:
+                raise ModelConfigError(str(exc)) from exc
+            last_error = exc
+    raise ModelUnavailable(str(last_error)) from last_error
 
 
 class OllamaGateway:
@@ -52,18 +68,12 @@ class OllamaGateway:
     ) -> ModelResult:
         runnable = self.chat_model.bind_tools(tools) if tools else self.chat_model
         normalized_messages = [_normalize_message(msg) for msg in messages]
-        try:
-            message: AIMessage = runnable.invoke(normalized_messages)
-        except (httpx.ConnectError, httpx.TimeoutException, ConnectionError) as exc:
-            raise ModelUnavailable(str(exc)) from exc
-        except ollama.ResponseError as exc:
-            if 400 <= exc.status_code < 500:
-                raise ModelConfigError(str(exc)) from exc
-            raise ModelUnavailable(str(exc)) from exc
+        message = _invoke_with_retry(runnable, normalized_messages)
         return ModelResult(
             message=message,
             provider="ollama",
             model=self._model_name,
             fell_back=False,
             refused=False,
+            truncated=message.response_metadata.get("done_reason") == "length",
         )

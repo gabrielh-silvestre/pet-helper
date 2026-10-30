@@ -48,7 +48,7 @@ O modelo cita em uma linha `Fonte: <título da política>`. O guard extrai essas
 
 ### Motivo
 
-O título é o nome que o modelo lê e cita, e o nome de arquivo é o id estável para a eval. Uma linha fixa é um contrato determinístico para um modelo fraco (`qualidade-vem-do-sistema`), e contar título desconhecido como não recuperado aplica `nao-inventa` às fontes. Os 8 títulos H1 das políticas são distintos depois da remoção de acento. O escopo é a sessão porque uma pergunta de continuação ("e se foi no Pix?") cita a política recuperada num turno anterior, e o estado `retrieved` do plano já é a união da sessão. O template garante por construção o "nunca diagnostica" e o motivo fora do texto (AC11), e como a sessão termina, nada útil ao cliente se perde.
+O título é o nome que o modelo lê e cita, e o nome de arquivo é o id estável para a eval. Uma linha fixa é um contrato determinístico para um modelo fraco (`qualidade-vem-do-sistema`), e contar título desconhecido como não recuperado aplica `nao-inventa` às fontes. Os 8 títulos H1 das políticas são distintos depois da remoção de acento. O escopo é a sessão porque uma pergunta de continuação ("e se foi no Pix?") cita a política recuperada num turno anterior, e o estado `retrieved` do plano já é a união da sessão. Quando o modelo chama `escalate_to_human`, o template garante por construção o "nunca diagnostica" e o motivo fora do texto (AC11), e como a sessão termina, nada útil ao cliente se perde. Se o modelo responde em texto direto sem chamar a ferramenta, a garantia é do prompt (regras 5 e 7) e do recall medido no smoke e na eval; no Ollama o caminho é provado só por testes de contrato. O risco está na tabela de riscos do [plano](plan.md).
 
 ### Alternativas
 
@@ -87,7 +87,11 @@ O contrato de variáveis de ambiente da §1 ganha `PET_HELPER_KIT_DIR`, com padr
 ## Emendas na entrega
 
 - Histórico enviado ao modelo fica intacto (sem poda de tool calls de turnos anteriores); o checkpointer usa serde pickle porque o `model_dump` achata o `artifact` das `ToolMessage`s (premissa `docs-specs-assistant:01a18db8-6eb8-707d-8344-0f71ac53330b`).
-- Exceção na §2 para a regeneração do guard de saída, decidida pelo dono (gap `docs-specs-assistant:01a18db9-16c9-76b8-a11f-215f2a12e06f`).
+- Exceção na §2 para a regeneração do guard de saída, decidida pelo dono (gap `docs-specs-assistant:01a18db9-16c9-76b8-a11f-215f2a12e06f`). Refinada na revisão do PR #5: as mensagens do assistente que sobram depois da corretiva perdem os blocos `thinking` e `redacted_thinking`, porque a assinatura deles depende do prefixo editado; aprovada pelo dono em 2026-10-30 (premissa `docs-specs-assistant:01a18e2f-d240-7773-9d64-0cf2b0e5e231`). A checagem contra a API real (`-m llm`, centavos) fica com o dono antes do merge.
+- Streaming, `usage`, `ttft_ms` e `cache_control` do gateway ficam adiados para a unidade de trace; `ModelResult`, `ModelGateway` e a forma da chamada mudam lá (premissa `docs-specs-assistant:01a18e2f-e90a-7738-b289-2e40018f48b9`).
+- Um segundo CPF válido e diferente do `session_cpf` na mesma sessão recebe um template fixo do backend ("nova conversa"), sem chamar o modelo, sem encerrar a sessão e sem contar como falha (premissa `docs-specs-assistant:01a18e2e-20a5-7ad9-8d79-b33e9ad3ad60`). O CPF com dígito verificador inválido chega ao modelo como `[CPF inválido]`.
+- O `search_catalog` devolve `name_matched` e, com filtro e sem acerto por nome, lista os candidatos filtrados em vez de vazio (premissa `docs-specs-assistant:01a18e2e-3a04-7c57-9ca3-a703804f5478`).
+- O `chat` imprime a causa do escalonamento em stderr e sai com 1 só para `model_unavailable`; `Reply` não muda (premissa `docs-specs-assistant:01a18e2e-6b68-7983-a9ed-ff3ddd70c9ff`). A sessão continua terminal depois de uma falha do provedor, com 1 retry no Ollama (premissa `docs-specs-assistant:01a18e30-4f96-7aa0-b72d-61e8a89850f0`).
 - `PET_HELPER_OLLAMA_MODEL` nomeia o modelo do Ollama (primário e fallback) e `PET_HELPER_ASSISTANT_MODEL` passa a ser só o modelo Anthropic (premissa `docs-specs-assistant:01a18dfa-f1b8-7951-994b-6f8e8d23d039`).
 
 ## Ajustes no plano

@@ -2,14 +2,24 @@
 
 Assistente de atendimento de um e-commerce pet fictício.
 
-## Setup
+## Setup nativo
 
 ```sh
 uv sync
-uv run pet-helper chat
+PET_HELPER_TODAY=2026-11-03 uv run pet-helper chat
 ```
 
+`PET_HELPER_TODAY` fixa a data de hoje do assistente. Sem ela, o assistente usa a data real, e os prazos dos pedidos do kit (calculados a partir de 2026-11-03, a `reference_date` de `kit/orders.json`) saem errados.
+
 Por padrão, a CLI carrega políticas, catálogo e pedidos do diretório `kit` relativo ao diretório de trabalho. Use `PET_HELPER_KIT_DIR` para apontar para outro caminho do kit.
+
+O provedor do modelo vem de três variáveis:
+
+- `PET_HELPER_PROVIDER`: `anthropic` ou `ollama`. Sem ela, a CLI usa `anthropic` quando `ANTHROPIC_API_KEY` está definida e `ollama` nos demais casos.
+- `ANTHROPIC_API_KEY`: chave da API da Anthropic.
+- `OLLAMA_BASE_URL`: endereço do servidor Ollama, quando não for o padrão.
+
+Se a conversa terminar com a causa `model_unavailable`, o provedor não respondeu: confira as variáveis acima e rode o comando de novo.
 
 ## Setup sem chave (Ollama)
 

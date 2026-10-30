@@ -4,19 +4,28 @@ import logging
 import os
 import re
 import secrets
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 from typing import Any
 
-from pet_helper.catalog import Catalog
-from pet_helper.catalog.models import SKU_PATTERN
-from pet_helper.orders.cpf import CPF_PATTERN, CPF_REGEX, is_valid_cpf, normalize_cpf
+from pet_helper.catalog import SKU_PATTERN, Catalog
+from pet_helper.orders import is_valid_cpf
 from pet_helper.text import fold_text
 
 TRACE_SALT_ENV = "PET_HELPER_TRACE_SALT"
 _CPF_PLACEHOLDER = "[CPF informado]"
+_INVALID_CPF_PLACEHOLDER = "[CPF inválido]"
 _PROCESS_SALT = secrets.token_hex(16)
+
+# mais tolerante que o formato estrito de orders: mascarar demais é o lado seguro
+_CPF_SEPARATOR = r"[\s.\N{HYPHEN}-\N{HORIZONTAL BAR}-]?"
+_CPF_CANDIDATE_PATTERN = (
+    rf"(?<!\d)\d{{3}}{_CPF_SEPARATOR}\d{{3}}{_CPF_SEPARATOR}"
+    rf"\d{{3}}{_CPF_SEPARATOR}\d{{2}}(?!\d)"
+)
+_CPF_CANDIDATE_REGEX = re.compile(_CPF_CANDIDATE_PATTERN)
 
 _SKU_IN_TEXT_REGEX = re.compile(rf"\b{SKU_PATTERN}\b")
 _LIST_BULLET_PREFIX = re.compile(r"^[-*]\s+")
@@ -58,12 +67,22 @@ class OutputVerdict:
     unretrieved_sources: list[str]
 
 
+def _cpf_digits(candidate: str) -> str:
+    return "".join(str(unicodedata.decimal(c)) for c in candidate if c.isdecimal())
+
+
 def _extract_first_valid_cpf(text: str) -> str | None:
-    for match in CPF_REGEX.finditer(text):
-        candidate = match.group(0)
-        if is_valid_cpf(candidate):
-            return normalize_cpf(candidate)
+    for match in _CPF_CANDIDATE_REGEX.finditer(text):
+        digits = _cpf_digits(match.group(0))
+        if is_valid_cpf(digits):
+            return digits
     return None
+
+
+def _mark_cpf(match: re.Match[str]) -> str:
+    if is_valid_cpf(_cpf_digits(match.group(0))):
+        return _CPF_PLACEHOLDER
+    return _INVALID_CPF_PLACEHOLDER
 
 
 def extract_skus(text: str) -> list[str]:
@@ -97,7 +116,7 @@ def extract_cited_titles(text: str) -> list[str]:
 
 
 def _pseudonymize_cpf(raw_cpf: str, salt: str) -> str:
-    digits = normalize_cpf(raw_cpf)
+    digits = _cpf_digits(raw_cpf)
     digest = hmac.new(salt.encode("utf-8"), digits.encode("utf-8"), hashlib.sha256)
     return f"cpf#{digest.hexdigest()[:8]}"
 
@@ -127,7 +146,7 @@ def _get_presidio_engines() -> tuple[Any, Any, Any]:
         PatternRecognizer(
             supported_entity="CPF",
             supported_language="pt",
-            patterns=[Pattern(name="cpf", regex=CPF_PATTERN, score=1.0)],
+            patterns=[Pattern(name="cpf", regex=_CPF_CANDIDATE_PATTERN, score=1.0)],
         )
     )
     analyzer = AnalyzerEngine(
@@ -161,7 +180,7 @@ class Guard:
 
     def inspect_input(self, text: str) -> InputVerdict:
         return InputVerdict(
-            model_text=CPF_REGEX.sub(_CPF_PLACEHOLDER, text),
+            model_text=_CPF_CANDIDATE_REGEX.sub(_mark_cpf, text),
             cpf=_extract_first_valid_cpf(text),
             injection_suspected=_has_injection_signal(text),
         )

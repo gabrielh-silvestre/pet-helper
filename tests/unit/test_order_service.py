@@ -213,6 +213,16 @@ def test_it_should_return_unavailable_on_503_without_retrying():
     assert len(api.calls) == 1
 
 
+@pytest.mark.parametrize("status", [400, 401, 429, 302])
+def test_it_should_return_unavailable_on_an_unexpected_non_200_status(status):
+    api = _FakeOrderApi([ApiResponse(status, _order_body())])
+    service = OrderService(api, clock=_FixedClock(date(2026, 11, 3)))
+
+    result = service.lookup(OWNER_CPF, "PED-10001")
+
+    assert result == Unavailable()
+
+
 @pytest.mark.parametrize("order_number", ["PED-50300", "PED-40800"])
 def test_it_should_map_mock_api_failures_to_unavailable(mock_api, order_number):
     service = OrderService(mock_api, clock=_FixedClock(date(2026, 11, 3)))

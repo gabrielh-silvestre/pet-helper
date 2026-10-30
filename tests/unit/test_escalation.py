@@ -9,10 +9,12 @@ from langchain_core.messages import AIMessage, ToolMessage
 import pet_helper.conversation as conversation
 from pet_helper.catalog import Catalog
 from pet_helper.conversation import Reply
+from pet_helper.conversation.state import highest_priority_reason
 from pet_helper.gateway import FakeGateway
 from pet_helper.knowledge import PolicyIndex
 from pet_helper.orders import OrderService
 from pet_helper.orders.api import MockOrderApi
+from tests.unit.graph_access import graph_of
 
 REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 SESSION_ID = "session-escalation"
@@ -57,7 +59,7 @@ def _escalated_assistant(*reasons: Any, text: str = "", extra_script=()):
 
 
 def _visited_nodes(assistant, session_id: str, text: str) -> list[str]:
-    chunks = assistant.graph.stream(
+    chunks = graph_of(assistant).stream(
         {"user_text": text},
         {"configurable": {"thread_id": session_id}},
         stream_mode="updates",
@@ -74,8 +76,8 @@ def _visited_nodes(assistant, session_id: str, text: str) -> list[str]:
     ],
 )
 def test_it_should_pick_the_higher_priority_reason_from_any_pair(first, second):
-    picked_forward = conversation.highest_priority_reason([first, second])
-    picked_backward = conversation.highest_priority_reason([second, first])
+    picked_forward = highest_priority_reason([first, second])
+    picked_backward = highest_priority_reason([second, first])
 
     assert picked_forward == first
     assert picked_backward == first
@@ -83,7 +85,7 @@ def test_it_should_pick_the_higher_priority_reason_from_any_pair(first, second):
 
 @pytest.mark.parametrize("reason", PRIORITY)
 def test_it_should_return_a_lone_reason_as_it_is(reason):
-    picked = conversation.highest_priority_reason([reason])
+    picked = highest_priority_reason([reason])
 
     assert picked == reason
 
@@ -194,11 +196,10 @@ def test_it_should_offer_the_model_only_the_three_model_driven_reasons():
 @pytest.mark.parametrize("reason", MODEL_DRIVEN_REASONS)
 def test_it_should_keep_the_session_ended_and_the_reason_in_the_checkpoint(reason):
     assistant, _ = _escalated_assistant(reason)
-    config = {"configurable": {"thread_id": SESSION_ID}}
 
     assistant.turn(SESSION_ID, "Quero falar com alguém")
 
-    values = assistant.graph.get_state(config).values
+    values = assistant.snapshot(SESSION_ID)
     assert values["escalation"] == reason
     assert values["ended"] is True
 
@@ -268,7 +269,5 @@ def test_it_should_leave_no_raw_cpf_in_the_state_after_a_turn_following_an_escal
 
     assistant.turn(SESSION_ID, "Meu CPF é 000.000.001-91, alguém me responde?")
 
-    values = assistant.graph.get_state(
-        {"configurable": {"thread_id": SESSION_ID}}
-    ).values
+    values = assistant.snapshot(SESSION_ID)
     assert values["user_text"] == ""

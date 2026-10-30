@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,10 @@ SESSION_ID = "session-output-guard"
 CUSTOMER_TEXT = "Quais produtos vocês recomendam?"
 CLEAN_REPLY = "Recomendo a ração PX-0001."
 INVALID_SKU = "PX-9999"
+THINKING_BLOCKS = {
+    "thinking": {"type": "thinking", "thinking": "Vou pensar.", "signature": "sig"},
+    "redacted_thinking": {"type": "redacted_thinking", "data": "opaque"},
+}
 INVALID_REPLIES = {
     "invented_sku": f"Recomendo o produto {INVALID_SKU}.",
     "unretrieved_source": "Pode devolver em até 7 dias.\nFonte: Reembolso",
@@ -33,9 +38,8 @@ def _assistant(script: list[Any]) -> tuple[Assistant, FakeGateway]:
     return conversation.build_assistant(gateway=gateway), gateway
 
 
-def _state(assistant: Assistant) -> dict[str, Any]:
-    config = {"configurable": {"thread_id": SESSION_ID}}
-    return assistant.graph.get_state(config).values
+def _state(assistant: Assistant) -> Mapping[str, Any]:
+    return assistant.snapshot(SESSION_ID)
 
 
 def _dialogue(assistant: Assistant) -> list[tuple[str, str]]:
@@ -53,6 +57,35 @@ def _search_policies_call() -> AIMessage:
             }
         ],
     )
+
+
+def _with_thinking(text: str, kind: str = "thinking") -> AIMessage:
+    return AIMessage(content=[THINKING_BLOCKS[kind], {"type": "text", "text": text}])
+
+
+def _search_policies_call_with_thinking() -> AIMessage:
+    tool_use = {
+        "type": "tool_use",
+        "id": "call_1",
+        "name": "search_policies",
+        "input": {"query": "frete gratis"},
+    }
+    return AIMessage(
+        content=[THINKING_BLOCKS["thinking"], tool_use],
+        tool_calls=_search_policies_call().tool_calls,
+    )
+
+
+def _thinking_blocks(message: AIMessage) -> list[Any]:
+    return [
+        block
+        for block in message.content
+        if isinstance(block, dict) and block["type"] in THINKING_BLOCKS
+    ]
+
+
+def _assistant_messages(assistant: Assistant) -> list[AIMessage]:
+    return [m for m in _state(assistant)["messages"] if isinstance(m, AIMessage)]
 
 
 @pytest.mark.parametrize("invalid_reply", INVALID_REPLIES.values(), ids=INVALID_REPLIES)
@@ -250,3 +283,118 @@ def test_it_should_allow_one_regeneration_in_each_turn():
 
     assert [reply.text for reply in replies] == [CLEAN_REPLY, CLEAN_REPLY]
     assert len(gateway.calls) == 4
+
+
+@pytest.mark.parametrize("kind", THINKING_BLOCKS)
+def test_it_should_drop_the_thinking_blocks_of_a_regenerated_reply_from_the_history(
+    kind,
+):
+    assistant, _ = _assistant(
+        [
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _with_thinking(CLEAN_REPLY, kind),
+        ]
+    )
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    (regenerated,) = _assistant_messages(assistant)
+    assert regenerated.text == CLEAN_REPLY
+    assert _thinking_blocks(regenerated) == []
+
+
+def test_it_should_drop_the_thinking_blocks_of_every_assistant_message_after_the_corrective_message():
+    assistant, _ = _assistant(
+        [
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _search_policies_call_with_thinking(),
+            _with_thinking(CLEAN_REPLY),
+        ]
+    )
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    tool_loop_message, final_message = _assistant_messages(assistant)
+    assert _thinking_blocks(tool_loop_message) == []
+    assert _thinking_blocks(final_message) == []
+
+
+def test_it_should_keep_the_tool_calls_and_the_tool_use_block_of_a_message_stripped_of_thinking():
+    assistant, _ = _assistant(
+        [
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _search_policies_call_with_thinking(),
+            _with_thinking(CLEAN_REPLY),
+        ]
+    )
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    tool_loop_message, _ = _assistant_messages(assistant)
+    assert tool_loop_message.tool_calls == _search_policies_call().tool_calls
+    assert [block["type"] for block in tool_loop_message.content] == ["tool_use"]
+
+
+def test_it_should_keep_the_message_order_after_stripping_thinking_from_the_tool_loop():
+    assistant, _ = _assistant(
+        [
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _search_policies_call_with_thinking(),
+            _with_thinking(CLEAN_REPLY),
+        ]
+    )
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    assert [message.type for message in _state(assistant)["messages"]] == [
+        "human",
+        "ai",
+        "tool",
+        "ai",
+    ]
+
+
+def test_it_should_keep_the_thinking_of_the_tool_loop_until_the_regeneration_ends():
+    assistant, gateway = _assistant(
+        [
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _search_policies_call_with_thinking(),
+            _with_thinking(CLEAN_REPLY),
+        ]
+    )
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    tool_loop_message_seen_by_the_model = gateway.calls[2][-2]
+    assert _thinking_blocks(tool_loop_message_seen_by_the_model) != []
+
+
+def test_it_should_keep_the_thinking_of_a_message_that_precedes_the_invalid_reply_in_the_same_turn():
+    assistant, _ = _assistant(
+        [
+            _search_policies_call_with_thinking(),
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _with_thinking(CLEAN_REPLY),
+        ]
+    )
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    earlier_message, _ = _assistant_messages(assistant)
+    assert _thinking_blocks(earlier_message) != []
+
+
+def test_it_should_keep_the_thinking_of_the_earlier_turns_of_the_session():
+    assistant, _ = _assistant(
+        [
+            _with_thinking("Olá! Como posso ajudar?"),
+            _with_thinking(INVALID_REPLIES["invented_sku"]),
+            _with_thinking(CLEAN_REPLY),
+        ]
+    )
+    assistant.turn(SESSION_ID, "Oi")
+
+    assistant.turn(SESSION_ID, CUSTOMER_TEXT)
+
+    first_turn_message, _ = _assistant_messages(assistant)
+    assert _thinking_blocks(first_turn_message) != []

@@ -15,6 +15,14 @@ def test_it_should_default_fell_back_to_false_on_model_result():
     assert result.fell_back is False
 
 
+def test_it_should_default_truncated_to_false_on_model_result():
+    message = AIMessage("hello")
+
+    result = ModelResult(message=message)
+
+    assert result.truncated is False
+
+
 def test_it_should_default_refused_to_false_on_model_result():
     message = AIMessage("hello")
 

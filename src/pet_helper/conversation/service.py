@@ -1,11 +1,11 @@
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
-from langgraph.graph.state import CompiledStateGraph
 
 from pet_helper.catalog import Catalog
 from pet_helper.conversation.graph import HANDOFF_REPLY, build_graph, handoff_state
@@ -45,40 +45,22 @@ def _cited_sources(text: str, retrieved: Sequence[PolicyHit]) -> tuple[str, ...]
     )
 
 
-def _default_registry(
-    policies: PolicyIndex | None,
-    catalog: Catalog | None,
-    orders: OrderService | None,
-) -> ToolRegistry:
-    services = (policies, catalog, orders)
-    if all(service is None for service in services):
-        return ToolRegistry()
-    if policies is None or catalog is None or orders is None:
-        raise ValueError(
-            "policies, catalog and orders must be given together, or pass a registry"
-        )
-    return build_tool_registry(policies=policies, catalog=catalog, orders=orders)
-
-
 class Assistant:
     def __init__(
         self,
         gateway: ModelGateway,
         guard: Guard,
-        *,
-        policies: PolicyIndex | None = None,
-        catalog: Catalog | None = None,
-        orders: OrderService | None = None,
         registry: ToolRegistry | None = None,
     ):
-        # registry replaces the default tools: it is not merged with the services
-        if registry is None:
-            registry = _default_registry(policies, catalog, orders)
-        self._graph = build_graph(gateway, guard, registry.tools)
+        selected_registry = registry if registry is not None else ToolRegistry()
+        self._graph = build_graph(gateway, guard, selected_registry.tools)
 
-    @property
-    def graph(self) -> CompiledStateGraph:
-        return self._graph
+    def snapshot(self, session_id: str) -> Mapping[str, Any]:
+        return self._graph.get_state({"configurable": {"thread_id": session_id}}).values
+
+    def escalation_cause(self, session_id: str) -> str | None:
+        state = self._graph.get_state({"configurable": {"thread_id": session_id}})
+        return state.values.get("escalation_cause")
 
     def turn(self, session_id: str, text: str) -> Reply:
         config: RunnableConfig = {
@@ -137,11 +119,9 @@ def build_assistant(
 ) -> Assistant:
     policies, catalog, orders = _load_kit(_resolve_kit_dir())
     selected_gateway = gateway if gateway is not None else build_gateway()
-    return Assistant(
-        selected_gateway,
-        Guard(catalog),
-        policies=policies,
-        catalog=catalog,
-        orders=orders,
-        registry=registry,
+    selected_registry = (
+        registry
+        if registry is not None
+        else build_tool_registry(policies=policies, catalog=catalog, orders=orders)
     )
+    return Assistant(selected_gateway, Guard(catalog), selected_registry)

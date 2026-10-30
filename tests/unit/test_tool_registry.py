@@ -91,14 +91,7 @@ def test_it_should_expose_a_registered_dummy_tool_to_the_gateway_model_binding(
         )[1],
     )
     gateway = OllamaGateway(chat_model=fake_chat_model)
-    assistant = Assistant(
-        gateway,
-        guard,
-        policies=policies,
-        catalog=catalog,
-        orders=orders,
-        registry=registry,
-    )
+    assistant = Assistant(gateway, guard, registry)
 
     assistant.turn("session-bind-dummy", "Tem armário no CEP 01310-100?")
 
@@ -137,14 +130,7 @@ def test_it_should_deliver_a_registered_dummy_tool_output_to_the_next_model_call
             "O armário Paulista atende o CEP 01310-100.",
         ]
     )
-    assistant = Assistant(
-        gateway,
-        guard,
-        policies=policies,
-        catalog=catalog,
-        orders=orders,
-        registry=registry,
-    )
+    assistant = Assistant(gateway, guard, registry)
 
     reply = assistant.turn("session-run-dummy", "Tem armário no CEP 01310-100?")
 

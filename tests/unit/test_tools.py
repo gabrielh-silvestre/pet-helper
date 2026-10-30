@@ -432,6 +432,100 @@ def test_it_should_apply_combined_species_with_category_filters_in_search_catalo
     assert "PX-0001" not in content
 
 
+def test_it_should_flag_a_name_match_in_the_search_catalog_content(kit_services):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    message = _invoke_in_tool_node(
+        search_catalog,
+        {"query": "Bigodin", "species": "cão", "category": "acessório"},
+    )
+
+    payload = json.loads(str(message.content))
+    assert payload["name_matched"] is True
+    assert [item["sku"] for item in payload["products"]] == ["PX-0043"]
+
+
+def test_it_should_flag_the_filtered_fallback_in_the_search_catalog_content(
+    kit_services,
+):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    message = _invoke_in_tool_node(
+        search_catalog,
+        {"query": "xpto", "species": "gato", "category": "ração"},
+    )
+
+    payload = json.loads(str(message.content))
+    assert payload["name_matched"] is False
+    assert {item["sku"] for item in payload["products"]} == {
+        "PX-0001",
+        "PX-0002",
+        "PX-0003",
+        "PX-0009",
+        "PX-0010",
+        "PX-0012",
+    }
+
+
+def test_it_should_flag_no_name_match_when_search_catalog_finds_nothing(kit_services):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    message = _invoke_in_tool_node(search_catalog, {"query": "gaiola para calopsita"})
+
+    payload = json.loads(str(message.content))
+    assert payload == {"products": [], "name_matched": False}
+
+
+def test_it_should_tell_the_model_to_put_only_product_words_in_the_search_catalog_query(
+    kit_services,
+):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    description = search_catalog.description
+
+    assert "query" in description
+
+
+def test_it_should_tell_the_model_how_to_handle_a_search_catalog_result_without_a_name_match(
+    kit_services,
+):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    description = search_catalog.description
+
+    assert "name_matched" in description
+
+
 def test_it_should_surface_out_of_stock_status_in_search_catalog_output(
     kit_services,
 ):

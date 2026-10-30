@@ -24,6 +24,9 @@ from pet_helper.gateway.ollama import OllamaGateway
 
 # thinking counts against max_tokens, so the cap stays roomy
 DEFAULT_MAX_TOKENS = 8192
+# the SDK default is 10 minutes; max_retries=1 repeats it, so the fallback fires after about 2x this
+REQUEST_TIMEOUT_SECONDS = 60
+_TRUNCATED_STOP_REASONS = {"max_tokens", "model_context_window_exceeded"}
 
 # 503, 504, and 529 inherit directly from APIStatusError rather than InternalServerError
 ANTHROPIC_TRANSPORT_ERRORS = (
@@ -46,6 +49,7 @@ def _build_default_chat_model(model_name: str) -> ChatAnthropic:
         model=model_name,
         max_retries=1,
         max_tokens=DEFAULT_MAX_TOKENS,
+        timeout=REQUEST_TIMEOUT_SECONDS,
         output_config={"effort": resolve_effort()},
     )
 
@@ -85,4 +89,6 @@ class AnthropicGateway:
             model=self._model_name,
             fell_back=False,
             refused=message.response_metadata.get("stop_reason") == "refusal",
+            truncated=message.response_metadata.get("stop_reason")
+            in _TRUNCATED_STOP_REASONS,
         )

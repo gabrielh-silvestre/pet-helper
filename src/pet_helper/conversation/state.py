@@ -46,6 +46,7 @@ class ConversationState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     user_text: str
     session_cpf: Annotated[str | None, _keep_first]
+    cpf_conflict: bool
     failures: dict[str, int]
     retrieved: Annotated[tuple[PolicyHit, ...], _union_retrieved]
     escalation: Annotated[EscalationReason | None, _keep_first]

@@ -17,6 +17,7 @@ from pet_helper.knowledge import PolicyIndex
 from pet_helper.orders import NeedsIdentification, NotFound, OrderService, Unavailable
 from pet_helper.orders.api import FAILURE_ENV
 from pet_helper.text import fold_text
+from tests.unit.graph_access import graph_of
 
 REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 ALLOWED_BUILTIN_TOOLS = {
@@ -25,6 +26,10 @@ ALLOWED_BUILTIN_TOOLS = {
     "search_catalog",
     "escalate_to_human",
 }
+
+INTERNAL_URL = "http://orders.internal.petx:8443/v2/orders"
+LEAKY_ERROR = RuntimeError(f"POST {INTERNAL_URL} failed for CPF 00000000191")
+LEAKY_TURN = "Meu CPF é 000.000.001-91. Consulte o pedido PED-10001."
 
 CONVERSATION_ENV_VARS = (
     "ANTHROPIC_API_KEY",
@@ -174,26 +179,31 @@ def test_it_should_return_validation_errors_as_error_tool_messages_inside_turn(
     assert tool_msgs[0].status == "error"
 
 
-def test_it_should_return_arbitrary_tool_exceptions_as_error_tool_messages_inside_turn():
+def _assistant_with_crashing_orders(
+    gateway: FakeGateway, error: Exception
+) -> Assistant:
     catalog = Catalog(REPO_KIT_DIR / "catalog.csv")
     policies = PolicyIndex.load(REPO_KIT_DIR / "policies")
     crashing_api: Any = SimpleNamespace(
-        get=lambda _order_number, _cpf: (_ for _ in ()).throw(
-            RuntimeError("unexpected order backend crash")
-        )
+        get=lambda _order_number, _cpf: (_ for _ in ()).throw(error)
     )
+    registry = conversation.build_tool_registry(
+        policies=policies,
+        catalog=catalog,
+        orders=OrderService(crashing_api),
+    )
+    return Assistant(gateway, Guard(catalog), registry)
+
+
+def test_it_should_return_arbitrary_tool_exceptions_as_error_tool_messages_inside_turn():
     gateway = FakeGateway(
         [
             _tool_call_message(("get_order", {"order_number": "PED-10001"})),
             "Não consegui consultar seu pedido neste instante.",
         ]
     )
-    assistant = Assistant(
-        gateway,
-        Guard(catalog),
-        policies=policies,
-        catalog=catalog,
-        orders=OrderService(crashing_api),
+    assistant = _assistant_with_crashing_orders(
+        gateway, RuntimeError("unexpected order backend crash")
     )
 
     reply = assistant.turn(
@@ -207,6 +217,76 @@ def test_it_should_return_arbitrary_tool_exceptions_as_error_tool_messages_insid
     assert tool_msgs[0].status == "error"
 
 
+def test_it_should_keep_the_internal_url_of_a_crashing_tool_out_of_the_tool_message():
+    gateway = FakeGateway(
+        [
+            _tool_call_message(("get_order", {"order_number": "PED-10001"})),
+            "Não consegui consultar seu pedido neste instante.",
+        ]
+    )
+    assistant = _assistant_with_crashing_orders(gateway, LEAKY_ERROR)
+
+    assistant.turn("session-tool-leak-url", LEAKY_TURN)
+
+    assert INTERNAL_URL not in str(_tool_messages(gateway.calls[1])[0].content)
+
+
+def test_it_should_keep_the_cpf_of_a_crashing_tool_out_of_the_tool_message():
+    gateway = FakeGateway(
+        [
+            _tool_call_message(("get_order", {"order_number": "PED-10001"})),
+            "Não consegui consultar seu pedido neste instante.",
+        ]
+    )
+    assistant = _assistant_with_crashing_orders(gateway, LEAKY_ERROR)
+
+    assistant.turn("session-tool-leak-cpf", LEAKY_TURN)
+
+    assert "00000000191" not in str(_tool_messages(gateway.calls[1])[0].content)
+
+
+def test_it_should_give_the_model_a_fixed_text_for_a_crashing_tool():
+    gateway = FakeGateway(
+        [
+            _tool_call_message(("get_order", {"order_number": "PED-10001"})),
+            "Não consegui consultar seu pedido neste instante.",
+        ]
+    )
+    assistant = _assistant_with_crashing_orders(gateway, LEAKY_ERROR)
+
+    assistant.turn("session-tool-fixed-text", LEAKY_TURN)
+
+    assert "RuntimeError" not in str(_tool_messages(gateway.calls[1])[0].content)
+
+
+def test_it_should_count_a_crashing_get_order_as_an_order_lookup_failure():
+    gateway = FakeGateway(
+        [
+            _tool_call_message(("get_order", {"order_number": "PED-10001"})),
+            "Não consegui consultar seu pedido neste instante.",
+        ]
+    )
+    assistant = _assistant_with_crashing_orders(gateway, LEAKY_ERROR)
+
+    assistant.turn("session-tool-count", LEAKY_TURN)
+
+    assert assistant.snapshot("session-tool-count")["failures"]["order_lookup"] == 1
+
+
+def test_it_should_tell_the_model_which_field_of_a_tool_call_is_invalid():
+    gateway = FakeGateway(
+        [
+            _tool_call_message(("get_order", {"order_number": 12345})),
+            "Pode me informar o número do pedido no formato PED-00000?",
+        ]
+    )
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    assistant.turn("session-bad-arg-reason", "Meu CPF é 000.000.001-91, cadê?")
+
+    assert "order_number" in str(_tool_messages(gateway.calls[1])[0].content)
+
+
 def test_it_should_run_mixed_parallel_tool_calls_without_state_conflict():
     gateway = FakeGateway(
         [
@@ -218,7 +298,6 @@ def test_it_should_run_mixed_parallel_tool_calls_without_state_conflict():
         ]
     )
     assistant = conversation.build_assistant(gateway=gateway)
-    config = {"configurable": {"thread_id": "session-parallel-mixed"}}
 
     reply = assistant.turn(
         "session-parallel-mixed",
@@ -227,7 +306,7 @@ def test_it_should_run_mixed_parallel_tool_calls_without_state_conflict():
 
     tool_msgs = _tool_messages(gateway.calls[1])
     retrieved_sources = {
-        hit.source for hit in assistant.graph.get_state(config).values["retrieved"]
+        hit.source for hit in assistant.snapshot("session-parallel-mixed")["retrieved"]
     }
     assert [msg.name for msg in tool_msgs] == ["search_policies", "search_catalog"]
     assert "frete.md" in retrieved_sources
@@ -245,7 +324,6 @@ def test_it_should_merge_retrieved_hits_across_parallel_search_policies_calls():
         ]
     )
     assistant = conversation.build_assistant(gateway=gateway)
-    config = {"configurable": {"thread_id": "session-parallel-policies"}}
 
     reply = assistant.turn(
         "session-parallel-policies",
@@ -253,7 +331,8 @@ def test_it_should_merge_retrieved_hits_across_parallel_search_policies_calls():
     )
 
     retrieved_sources = {
-        hit.source for hit in assistant.graph.get_state(config).values["retrieved"]
+        hit.source
+        for hit in assistant.snapshot("session-parallel-policies")["retrieved"]
     }
     assert {"troca-e-devolucao.md", "reembolso.md"} <= retrieved_sources
     assert reply.sources == ("troca-e-devolucao.md", "reembolso.md")
@@ -270,7 +349,7 @@ def test_it_should_write_retrieved_hits_exclusively_in_the_record_node():
     config = {"configurable": {"thread_id": "session-record-retrieved"}}
 
     chunks = list(
-        assistant.graph.stream(
+        graph_of(assistant).stream(
             {"user_text": "Qual a regra de frete grátis?"},
             config,
             stream_mode="updates",
@@ -289,7 +368,8 @@ def test_it_should_write_retrieved_hits_exclusively_in_the_record_node():
         node_name for node_name, update in node_updates if "retrieved" in update
     ]
     final_sources = {
-        hit.source for hit in assistant.graph.get_state(config).values["retrieved"]
+        hit.source
+        for hit in assistant.snapshot("session-record-retrieved")["retrieved"]
     }
     assert tools_keys == [{"messages"}]
     assert retrieved_writers == ["record"]
@@ -330,7 +410,7 @@ def test_it_should_write_step_failures_exclusively_in_the_record_node(
     config = {"configurable": {"thread_id": session_id}}
 
     chunks = list(
-        assistant.graph.stream(
+        graph_of(assistant).stream(
             {"user_text": customer_text},
             config,
             stream_mode="updates",
@@ -349,7 +429,7 @@ def test_it_should_write_step_failures_exclusively_in_the_record_node(
     failure_writers = [
         node_name for node_name, update in post_gate_updates if "failures" in update
     ]
-    final_failures = assistant.graph.get_state(config).values["failures"]
+    final_failures = assistant.snapshot(session_id)["failures"]
     assert tools_keys == [{"messages"}]
     assert failure_writers == ["record"]
     assert final_failures.get(expected_step) == 1
@@ -365,7 +445,6 @@ def test_it_should_list_only_cited_retrieved_policy_filenames_in_reply_sources()
         ]
     )
     assistant = conversation.build_assistant(gateway=gateway)
-    config = {"configurable": {"thread_id": "session-cited-only"}}
 
     reply = assistant.turn(
         "session-cited-only",
@@ -373,7 +452,7 @@ def test_it_should_list_only_cited_retrieved_policy_filenames_in_reply_sources()
     )
 
     retrieved_sources = {
-        hit.source for hit in assistant.graph.get_state(config).values["retrieved"]
+        hit.source for hit in assistant.snapshot("session-cited-only")["retrieved"]
     }
     assert len(retrieved_sources) == 2
     assert reply.sources == ("cancelamento.md",)
@@ -522,7 +601,6 @@ def test_it_should_flag_injection_while_exposing_no_coupon_granting_tool():
         )[1]
     )
     assistant = conversation.build_assistant(gateway=capturing_gateway)
-    config = {"configurable": {"thread_id": "session-coupon-injection"}}
 
     reply = assistant.turn(
         "session-coupon-injection",
@@ -530,7 +608,7 @@ def test_it_should_flag_injection_while_exposing_no_coupon_granting_tool():
     )
 
     bound_names = {item.name for item in bound_tool_sets[0]}
-    assert assistant.graph.get_state(config).values["injection_suspected"] is True
+    assert assistant.snapshot("session-coupon-injection")["injection_suspected"] is True
     assert {"search_policies", "get_order", "search_catalog"} <= bound_names
     assert bound_names <= ALLOWED_BUILTIN_TOOLS
     assert reply.text == "Não posso conceder cupons ou descontos."

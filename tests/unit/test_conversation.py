@@ -3,15 +3,16 @@ import json
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage, ToolMessage
 
 import pet_helper.conversation as conversation
-from pet_helper.catalog import Catalog
 from pet_helper.conversation import Assistant, Reply
-from pet_helper.gateway import AnthropicGateway, FakeGateway, OllamaGateway
-from pet_helper.guard import Guard
-from pet_helper.knowledge import PolicyIndex
-from pet_helper.orders import OrderService
-from pet_helper.orders.api import MockOrderApi
+from pet_helper.gateway import (
+    AnthropicGateway,
+    FakeGateway,
+    ModelUnavailable,
+    OllamaGateway,
+)
 
 REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 
@@ -206,24 +207,83 @@ def test_it_should_raise_a_single_line_error_naming_the_resolved_path_for_an_inc
     assert "\n" not in message
 
 
-@pytest.mark.parametrize(
-    "provided",
-    [("policies",), ("catalog", "orders")],
-    ids=["policies", "catalog+orders"],
-)
-def test_it_should_raise_a_clear_error_when_built_with_partial_services_and_no_registry(
-    provided,
-):
-    catalog = Catalog(REPO_KIT_DIR / "catalog.csv")
-    services = {
-        "policies": PolicyIndex.load(REPO_KIT_DIR / "policies"),
-        "catalog": catalog,
-        "orders": OrderService(MockOrderApi(REPO_KIT_DIR / "orders.json")),
+def test_it_should_export_only_the_assistant_interface_from_the_conversation_package():
+    assert set(conversation.__all__) == {
+        "Assistant",
+        "EscalationReason",
+        "KitError",
+        "Reply",
+        "ToolRegistry",
+        "build_assistant",
+        "build_tool_registry",
     }
 
-    with pytest.raises(ValueError, match="registry"):
-        Assistant(
-            FakeGateway(["ok"]),
-            Guard(catalog),
-            **{name: services[name] for name in provided},
-        )
+
+def test_it_should_not_expose_the_compiled_graph_on_the_assistant(monkeypatch):
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
+    assistant = conversation.build_assistant(gateway=FakeGateway(["Olá!"]))
+
+    assert not hasattr(assistant, "graph")
+
+
+def test_it_should_build_the_default_tools_when_build_assistant_gets_no_registry(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
+    gateway = FakeGateway(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_catalog",
+                        "args": {"query": "Bigodin"},
+                        "id": "call_catalog_1",
+                    }
+                ],
+            ),
+            "Encontrei produtos Bigodin.",
+        ]
+    )
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    assistant.turn("session-default-tools", "Tem algo da Bigodin?")
+
+    tool_messages = [
+        message for message in gateway.calls[1] if isinstance(message, ToolMessage)
+    ]
+    assert [message.name for message in tool_messages] == ["search_catalog"]
+    assert "PX-0043" in str(tool_messages[0].content)
+
+
+def test_it_should_return_the_snapshot_values_of_a_session(monkeypatch):
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
+    assistant = conversation.build_assistant(gateway=FakeGateway(["Olá!"]))
+    assistant.turn("session-snapshot", "Olá")
+
+    snapshot = assistant.snapshot("session-snapshot")
+
+    assert snapshot["messages"][0].text == "Olá"
+    assert snapshot["messages"][-1].text == "Olá!"
+
+
+def test_it_should_report_the_cause_of_an_escalation_after_the_turn(monkeypatch):
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
+    assistant = conversation.build_assistant(gateway=FakeGateway([ModelUnavailable()]))
+    assistant.turn("session-cause", "Qual o prazo de entrega?")
+
+    cause = assistant.escalation_cause("session-cause")
+
+    assert cause == "model_unavailable"
+
+
+def test_it_should_report_no_escalation_cause_when_the_session_did_not_escalate(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
+    assistant = conversation.build_assistant(gateway=FakeGateway(["Olá!"]))
+    assistant.turn("session-no-cause", "Olá")
+
+    cause = assistant.escalation_cause("session-no-cause")
+
+    assert cause is None
