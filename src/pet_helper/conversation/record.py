@@ -9,12 +9,16 @@ from pet_helper.conversation.state import (
     highest_priority_reason,
     record_step_outcome,
 )
+from pet_helper.conversation.tools import ESCALATE_TOOL, GET_ORDER_TOOL
 from pet_helper.knowledge import PolicyHit
-from pet_helper.orders import Found, NeedsIdentification, NotFound, Unavailable
-from pet_helper.orders.models import ORDER_NUMBER_PATTERN
+from pet_helper.orders import (
+    ORDER_NUMBER_PATTERN,
+    Found,
+    NeedsIdentification,
+    NotFound,
+    Unavailable,
+)
 
-_ORDER_TOOL = "get_order"
-_ESCALATE_TOOL = "escalate_to_human"
 _STEP_FAILURE_LIMIT = 3
 TOOL_ROUNDS_CAP = 8
 
@@ -37,23 +41,24 @@ def _latest_tool_round(
     return results, args_by_call_id
 
 
-def _order_step_outcome(
+def _order_step_outcomes(
     result: ToolMessage, args: dict[str, Any]
-) -> tuple[str, bool] | None:
+) -> list[tuple[str, bool]]:
     if result.status == "error":
         order_number = args.get("order_number")
         valid = isinstance(order_number, str) and re.fullmatch(
             ORDER_NUMBER_PATTERN, order_number
         )
-        return ("order_lookup" if valid else "order_number", False)
+        return [("order_lookup" if valid else "order_number", False)]
+    # a result that is not an error means a well-formed number reached the lookup
     match result.artifact:
         case Found():
-            return "order_lookup", True
+            return [("order_number", True), ("order_lookup", True)]
         case NotFound() | Unavailable():
-            return "order_lookup", False
+            return [("order_number", True), ("order_lookup", False)]
         case NeedsIdentification():
-            return "identification", False
-    return None
+            return [("order_number", True), ("identification", False)]
+    return []
 
 
 def _repeated_failure_cause(failures: dict[str, int], tool_rounds: int) -> str | None:
@@ -72,15 +77,14 @@ def record_node(state: ConversationState) -> dict[str, Any]:
     for result in results:
         if isinstance(result.artifact, list):
             hits.extend(item for item in result.artifact if isinstance(item, PolicyHit))
-        if result.name == _ESCALATE_TOOL and result.status != "error":
+        if result.name == ESCALATE_TOOL and result.status != "error":
             reasons.append(result.artifact)
-        if result.name != _ORDER_TOOL:
+        if result.name != GET_ORDER_TOOL:
             continue
-        outcome = _order_step_outcome(
+        for step, succeeded in _order_step_outcomes(
             result, args_by_call_id.get(result.tool_call_id, {})
-        )
-        if outcome is not None:
-            failures, counted = record_step_outcome(failures, counted, *outcome)
+        ):
+            failures, counted = record_step_outcome(failures, counted, step, succeeded)
     tool_rounds = state.get("tool_rounds", 0) + 1
     failure_cause = _repeated_failure_cause(failures, tool_rounds)
     if failure_cause is not None:
@@ -92,7 +96,7 @@ def record_node(state: ConversationState) -> dict[str, Any]:
             "escalation": reason,
             "escalation_cause": failure_cause
             if reason == "repeated_failure" and failure_cause is not None
-            else _ESCALATE_TOOL,
+            else ESCALATE_TOOL,
         }
     return {
         **escalation,

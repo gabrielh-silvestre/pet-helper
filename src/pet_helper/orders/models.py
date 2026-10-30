@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 # the SKU pattern is PX-nnnn, so the two never match each other
-ORDER_NUMBER_PATTERN = r"PED-\d{5}"
+ORDER_NUMBER_PATTERN = r"^PED-\d{5}$"
 
 
 class Customer(BaseModel):

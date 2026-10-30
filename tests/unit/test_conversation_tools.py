@@ -31,6 +31,7 @@ CONVERSATION_ENV_VARS = (
     "OLLAMA_BASE_URL",
     "PET_HELPER_PROVIDER",
     "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
     "PET_HELPER_EFFORT",
     "PET_HELPER_FALLBACK",
     "PET_HELPER_KIT_DIR",
@@ -596,3 +597,44 @@ def test_it_should_forbid_granting_coupons_or_discounts_in_the_system_prompt():
     folded_prompt = fold_text(_system_prompt_from_first_call(gateway))
     assert "cupom" in folded_prompt or "cupons" in folded_prompt
     assert "desconto" in folded_prompt
+
+
+def _first_system_prompt(session_id: str) -> str:
+    gateway = FakeGateway(["Olá!"])
+    assistant = conversation.build_assistant(gateway=gateway)
+
+    assistant.turn(session_id, "Olá")
+
+    return _system_prompt_from_first_call(gateway)
+
+
+def test_it_should_name_the_escalation_tool_in_the_system_prompt():
+    prompt = _first_system_prompt("session-prompt-escalate-tool")
+
+    assert "escalate_to_human" in prompt
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["animal_health_question", "strong_negative_sentiment", "explicit_request"],
+)
+def test_it_should_name_each_model_driven_escalation_reason_in_the_system_prompt(
+    reason,
+):
+    prompt = _first_system_prompt("session-prompt-escalate-reason")
+
+    assert reason in prompt
+
+
+def test_it_should_not_offer_repeated_failure_as_a_reason_in_the_system_prompt():
+    prompt = _first_system_prompt("session-prompt-no-repeated-failure")
+
+    assert "repeated_failure" not in prompt
+
+
+def test_it_should_say_an_ordinary_complaint_does_not_escalate_in_the_system_prompt():
+    prompt = _first_system_prompt("session-prompt-ordinary-complaint")
+
+    folded_prompt = fold_text(prompt)
+    assert "reclamacao" in folded_prompt
+    assert "nao escala" in folded_prompt

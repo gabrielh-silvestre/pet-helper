@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, call
 
 import httpx
+import ollama
 import pytest
 from langchain_core.language_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -20,6 +21,7 @@ GATEWAY_ENV_VARS = (
     "OLLAMA_BASE_URL",
     "PET_HELPER_PROVIDER",
     "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
     "PET_HELPER_EFFORT",
     "PET_HELPER_FALLBACK",
 )
@@ -245,6 +247,48 @@ def test_it_should_raise_model_unavailable_when_both_providers_fail():
         gateway.complete([HumanMessage("hello")])
 
     assert isinstance(exc_info.value, ModelUnavailable)
+
+
+def _fall_back_with_default_ollama(monkeypatch) -> ModelResult:
+    def build_stub(model, **_):
+        chat_model = _mock_ollama_model()
+        chat_model.model = model
+        return chat_model
+
+    monkeypatch.setattr("pet_helper.gateway.ollama.ChatOllama", build_stub)
+    gateway = AnthropicGateway(chat_model=_raising_runnable(_anthropic_error(529)))
+
+    return gateway.complete([HumanMessage("hello")])
+
+
+def test_it_should_use_the_default_ollama_model_in_the_fallback_when_the_anthropic_model_is_overridden(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_ASSISTANT_MODEL", "claude-sonnet-5-5")
+
+    result = _fall_back_with_default_ollama(monkeypatch)
+
+    assert result.model == "llama3.1:8b"
+
+
+def test_it_should_use_pet_helper_ollama_model_in_the_fallback(monkeypatch):
+    monkeypatch.setenv("PET_HELPER_ASSISTANT_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setenv("PET_HELPER_OLLAMA_MODEL", "llama3.2:3b")
+
+    result = _fall_back_with_default_ollama(monkeypatch)
+
+    assert result.model == "llama3.2:3b"
+
+
+def test_it_should_propagate_a_missing_fallback_model_as_model_config_error():
+    missing_model = _raising_runnable(ollama.ResponseError("model not found", 404))
+    gateway = AnthropicGateway(
+        chat_model=_raising_runnable(_anthropic_error("connection")),
+        fallback=OllamaGateway(chat_model=missing_model),
+    )
+
+    with pytest.raises(ModelConfigError, match="model not found"):
+        gateway.complete([HumanMessage("hello")])
 
 
 def test_it_should_build_an_anthropic_gateway_when_anthropic_is_selected(monkeypatch):

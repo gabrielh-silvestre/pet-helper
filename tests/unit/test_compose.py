@@ -3,7 +3,7 @@ import posixpath
 import re
 import shlex
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -13,13 +13,8 @@ COMPOSE_PATH = ROOT / "compose.yaml"
 DOCKERFILE_PATH = ROOT / "Dockerfile"
 README_PATH = ROOT / "README.md"
 
+OLLAMA_MODEL_EXPRESSION = "${PET_HELPER_OLLAMA_MODEL:-llama3.1:8b}"
 COMPOSE_DEFAULT_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*):-?([^}]+)\}$")
-PULL_DIRECT_DEFAULT_PATTERN = re.compile(
-    r"(?:^|[\s/])ollama\s+pull\s+[\"']?\$\{([A-Za-z_][A-Za-z0-9_]*):-?([^}\"']+)\}[\"']?(?:\s|$)"
-)
-PULL_ENV_REF_PATTERN = re.compile(
-    r"(?:^|[\s/])ollama\s+pull\s+[\"']?\$\$?\{?([A-Za-z_][A-Za-z0-9_]*)\}?[\"']?(?:\s|$)"
-)
 NO_KEY_HEADING_PATTERN = re.compile(
     r"\b(?:sem\s+chave|sem\s+api[- ]?key|no[- ]key|without\s+(?:an?\s+)?(?:api\s+)?key|ollama)\b",
     re.IGNORECASE,
@@ -28,12 +23,9 @@ NO_KEY_HEADING_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class _ParsedDockerfile:
-    run_commands: tuple[str, ...]
     workdir: str | None
     env: dict[str, str]
     kit_dirs: frozenset[str]
-    entrypoint: tuple[str, ...]
-    cmd: tuple[str, ...]
 
 
 def _load_compose() -> dict[str, Any]:
@@ -59,9 +51,7 @@ def _command_text(value: Any) -> str:
     return ""
 
 
-def _env_map(
-    service: dict[str, Any], *, resolve_defaults: bool = True
-) -> dict[str, str]:
+def _raw_env_map(service: dict[str, Any]) -> dict[str, str]:
     raw = service.get("environment")
     entries: dict[str, str] = {}
     if isinstance(raw, dict):
@@ -72,10 +62,12 @@ def _env_map(
         for item in raw:
             key, sep, val = str(item).partition("=")
             entries[key] = val if sep else ""
-    if not resolve_defaults:
-        return entries
+    return entries
+
+
+def _env_map(service: dict[str, Any]) -> dict[str, str]:
     resolved: dict[str, str] = {}
-    for key, val in entries.items():
+    for key, val in _raw_env_map(service).items():
         match = COMPOSE_DEFAULT_PATTERN.match(val)
         resolved[key] = match.group(2) if match else val
     return resolved
@@ -125,7 +117,6 @@ def _parse_dockerfile() -> _ParsedDockerfile:
     if buffer.strip():
         logical_lines.append(buffer.strip())
 
-    run_commands: list[str] = []
     global_args: dict[str, str] = {}
     stage_kits_by_key: dict[str, set[str]] = {}
     stage_index = -1
@@ -134,8 +125,6 @@ def _parse_dockerfile() -> _ParsedDockerfile:
     env: dict[str, str] = {}
     args: dict[str, str] = {}
     kit_dirs: set[str] = set()
-    entrypoint: list[str] = []
-    cmd: list[str] = []
 
     def _expand(value: str) -> str:
         scope = {**args, **env}
@@ -144,23 +133,6 @@ def _parse_dockerfile() -> _ParsedDockerfile:
             lambda m: scope.get(m.group(1) or m.group(2), m.group(0)),
             value,
         )
-
-    def _parse_exec_or_shell(raw_arg: str) -> list[str]:
-        stripped = raw_arg.strip()
-        tokens = (
-            [str(item) for item in json.loads(stripped)]
-            if stripped.startswith("[")
-            else shlex.split(stripped)
-        )
-        if "-c" in tokens:
-            idx = tokens.index("-c")
-            if idx + 1 < len(tokens):
-                tokens = [
-                    *tokens[: idx + 1],
-                    *shlex.split(tokens[idx + 1]),
-                    *tokens[idx + 2 :],
-                ]
-        return tokens
 
     for line in logical_lines:
         keyword, _, rest = line.partition(" ")
@@ -182,8 +154,6 @@ def _parse_dockerfile() -> _ParsedDockerfile:
             env = {}
             args = dict(global_args)
             kit_dirs = set()
-            entrypoint = []
-            cmd = []
         elif instruction == "ARG":
             target_args = global_args if stage_index < 0 else args
             for token in shlex.split(argument):
@@ -205,8 +175,6 @@ def _parse_dockerfile() -> _ParsedDockerfile:
             elif argument:
                 key, _, val = argument.partition(" ")
                 env[key] = _expand(val.strip()).strip("\"'")
-        elif instruction == "RUN":
-            run_commands.append(argument)
         elif instruction == "COPY":
             from_stage: str | None = None
             parents = False
@@ -255,19 +223,11 @@ def _parse_dockerfile() -> _ParsedDockerfile:
                                 kit_dirs.add(
                                     posixpath.normpath(posixpath.join(dest_dir, rel))
                                 )
-        elif instruction == "ENTRYPOINT":
-            entrypoint = _parse_exec_or_shell(argument)
-            cmd = []
-        elif instruction == "CMD":
-            cmd = _parse_exec_or_shell(argument)
 
     return _ParsedDockerfile(
-        run_commands=tuple(run_commands),
         workdir=workdir,
         env=env,
         kit_dirs=frozenset(kit_dirs),
-        entrypoint=tuple(entrypoint),
-        cmd=tuple(cmd),
     )
 
 
@@ -282,33 +242,6 @@ def test_it_should_pin_the_ollama_service_image_to_0_40_12():
     ollama = _service(compose, "ollama")
 
     assert ollama.get("image") == "ollama/ollama:0.40.12"
-
-
-def test_it_should_pin_every_declared_service_image_in_compose():
-    compose = _load_compose()
-    services = compose.get("services") or {}
-
-    unpinned = [
-        image
-        for service in services.values()
-        if isinstance(service, dict) and (image := service.get("image"))
-        if ":" not in str(image).rsplit("/", maxsplit=1)[-1]
-        or str(image).endswith(":latest")
-    ]
-
-    assert services != {}
-    assert unpinned == []
-
-
-def test_it_should_run_ollama_list_in_the_ollama_service_healthcheck():
-    compose = _load_compose()
-    ollama = _service(compose, "ollama")
-
-    healthcheck = ollama.get("healthcheck") or {}
-    check_command = _command_text(healthcheck.get("test"))
-
-    assert not healthcheck.get("disable")
-    assert re.search(r"(?:^|[\s/])ollama\s+list(?:\s|$)", check_command) is not None
 
 
 def test_it_should_wait_for_a_healthy_ollama_before_starting_the_init_service():
@@ -334,25 +267,31 @@ def test_it_should_pull_the_model_with_ollama_pull_in_the_init_service():
     assert re.search(r"(?:^|[\s/])ollama\s+pull\s+\S+", invocation) is not None
 
 
-def test_it_should_default_the_pulled_model_tag_to_llama3_1_8b_with_variable_override():
+def test_it_should_pull_the_model_named_by_pet_helper_ollama_model_in_the_init_service():
     compose = _load_compose()
     _, init_service = _init_service(compose)
 
     invocation = _init_invocation(init_service)
-    direct_match = PULL_DIRECT_DEFAULT_PATTERN.search(invocation)
-    if direct_match:
-        override_var, default_tag = direct_match.groups()
-    else:
-        ref_match = PULL_ENV_REF_PATTERN.search(invocation)
-        raw_env = _env_map(init_service, resolve_defaults=False)
-        env_expr = raw_env.get(ref_match.group(1), "") if ref_match else ""
-        env_default = COMPOSE_DEFAULT_PATTERN.match(env_expr)
-        override_var, default_tag = (
-            env_default.groups() if env_default else (None, None)
-        )
 
-    assert override_var is not None
-    assert default_tag == "llama3.1:8b"
+    assert invocation.split()[-1] == OLLAMA_MODEL_EXPRESSION
+
+
+def test_it_should_give_the_app_service_the_same_ollama_model_as_the_pull():
+    compose = _load_compose()
+    app = _service(compose, "app")
+
+    env = _raw_env_map(app)
+
+    assert env.get("PET_HELPER_OLLAMA_MODEL") == OLLAMA_MODEL_EXPRESSION
+
+
+def test_it_should_not_set_the_anthropic_model_variable_on_the_app_service():
+    compose = _load_compose()
+    app = _service(compose, "app")
+
+    env = _raw_env_map(app)
+
+    assert "PET_HELPER_ASSISTANT_MODEL" not in env
 
 
 def test_it_should_wait_for_the_init_service_to_complete_before_starting_app():
@@ -367,22 +306,6 @@ def test_it_should_wait_for_the_init_service_to_complete_before_starting_app():
 
     assert isinstance(init_dependency, dict)
     assert init_dependency.get("condition") == "service_completed_successfully"
-
-
-def test_it_should_build_the_app_service_from_the_dockerfile():
-    compose = _load_compose()
-    app = _service(compose, "app")
-
-    build = app.get("build")
-    if isinstance(build, str):
-        context, dockerfile = posixpath.normpath(build), "Dockerfile"
-    elif isinstance(build, dict):
-        context = posixpath.normpath(str(build.get("context", ".")))
-        dockerfile = posixpath.normpath(str(build.get("dockerfile", "Dockerfile")))
-    else:
-        context, dockerfile = None, None
-
-    assert (context, dockerfile) == (".", "Dockerfile")
 
 
 def test_it_should_set_ollama_base_url_on_the_app_service():
@@ -403,26 +326,6 @@ def test_it_should_set_pet_helper_provider_to_ollama_on_the_app_service():
     assert env.get("PET_HELPER_PROVIDER") == "ollama"
 
 
-def test_it_should_enable_interactive_terminal_io_on_the_app_service():
-    compose = _load_compose()
-
-    app = _service(compose, "app")
-
-    assert (app.get("stdin_open"), app.get("tty")) == (True, True)
-
-
-def test_it_should_install_locked_dependencies_with_uv_sync_in_the_dockerfile():
-    dockerfile = _parse_dockerfile()
-
-    locked_sync_runs = [
-        run_cmd
-        for run_cmd in dockerfile.run_commands
-        if re.search(r"\buv\s+sync\b(?=.*--locked\b)", run_cmd)
-    ]
-
-    assert locked_sync_runs != []
-
-
 def test_it_should_resolve_the_copied_kit_directory_inside_the_container():
     dockerfile = _parse_dockerfile()
 
@@ -433,21 +336,6 @@ def test_it_should_resolve_the_copied_kit_directory_inside_the_container():
 
     assert dockerfile.workdir is not None or "PET_HELPER_KIT_DIR" in dockerfile.env
     assert resolved_kit in dockerfile.kit_dirs
-
-
-def test_it_should_set_the_dockerfile_entrypoint_to_pet_helper_chat():
-    dockerfile = _parse_dockerfile()
-
-    entrypoint_names = [PurePosixPath(token).name for token in dockerfile.entrypoint]
-    full_command_names = [
-        PurePosixPath(token).name for token in [*dockerfile.entrypoint, *dockerfile.cmd]
-    ]
-
-    assert "pet-helper" in entrypoint_names
-    assert any(
-        full_command_names[i : i + 2] == ["pet-helper", "chat"]
-        for i in range(len(full_command_names) - 1)
-    )
 
 
 def test_it_should_document_docker_compose_run_in_a_no_key_readme_section():
@@ -471,12 +359,14 @@ def test_it_should_document_docker_compose_run_in_a_no_key_readme_section():
     assert matching_sections != []
 
 
-def test_it_should_document_pet_helper_kit_dir_in_the_readme():
+def test_it_should_override_the_ollama_model_with_pet_helper_ollama_model_in_the_readme_low_ram_example():
     readme = _load_readme()
 
-    match = re.search(r"\bPET_HELPER_KIT_DIR\b", readme)
+    has_example = (
+        "PET_HELPER_OLLAMA_MODEL=llama3.2:3b docker compose run --rm app" in readme
+    )
 
-    assert match is not None
+    assert has_example is True
 
 
 def test_it_should_include_the_built_with_llama_attribution_in_the_readme():

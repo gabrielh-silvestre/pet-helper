@@ -219,6 +219,31 @@ def test_it_should_not_add_up_failures_of_different_steps():
     assert [reply.escalation for reply in replies] == [None] * 4
 
 
+@pytest.mark.parametrize("valid_number", [UNKNOWN_ORDER, OWN_ORDER])
+def test_it_should_reset_the_order_number_counter_when_a_valid_number_is_looked_up_between_failures(
+    valid_number,
+):
+    gateway = FakeGateway(
+        [
+            _failing_order_call("order_number"),
+            "Preciso do número do pedido.",
+            _tool_call_message(("get_order", {"order_number": valid_number})),
+            "Respondi sobre o pedido.",
+            _failing_order_call("order_number"),
+            "Preciso do número do pedido.",
+            _failing_order_call("order_number"),
+            "Preciso do número do pedido.",
+        ]
+    )
+    assistant = conversation.build_assistant(gateway=gateway)
+    texts = [STEP_FAILURES["order_number"][0], *[LATER_TEXT] * 3]
+
+    replies = [assistant.turn(SESSION_ID, text) for text in texts]
+
+    assert [reply.escalation for reply in replies] == [None] * 4
+    assert _state(assistant)["failures"]["order_number"] == 2
+
+
 def test_it_should_count_a_step_once_per_turn_when_the_model_retries_the_failing_tool():
     gateway = FakeGateway(
         [

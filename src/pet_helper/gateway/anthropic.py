@@ -1,3 +1,4 @@
+import os
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -7,6 +8,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, BaseMessage
 
 from pet_helper.gateway.config import (
+    ANTHROPIC_API_KEY_ENV,
     resolve_anthropic_model,
     resolve_effort,
     resolve_fallback,
@@ -20,7 +22,8 @@ from pet_helper.gateway.models import (
 )
 from pet_helper.gateway.ollama import OllamaGateway
 
-DEFAULT_MAX_TOKENS = 4096
+# thinking counts against max_tokens, so the cap stays roomy
+DEFAULT_MAX_TOKENS = 8192
 
 # 503, 504, and 529 inherit directly from APIStatusError rather than InternalServerError
 ANTHROPIC_TRANSPORT_ERRORS = (
@@ -34,6 +37,10 @@ ANTHROPIC_TRANSPORT_ERRORS = (
 
 
 def _build_default_chat_model(model_name: str) -> ChatAnthropic:
+    if not os.environ.get(ANTHROPIC_API_KEY_ENV):
+        raise ModelConfigError(
+            f"{ANTHROPIC_API_KEY_ENV} is required when PET_HELPER_PROVIDER=anthropic"
+        )
     # Sampling params (temperature, top_p, top_k) are intentionally omitted: Haiku 5.5 rejects them with HTTP 400
     return ChatAnthropic(
         model=model_name,

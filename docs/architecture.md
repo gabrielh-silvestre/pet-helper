@@ -14,7 +14,7 @@ Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 2
 - Fallback em execução: da Anthropic para o Ollama, só em erro de transporte (conexão, timeout, 429, 5xx ou 529) e depois de 1 retry do SDK. Nunca em 4xx nem em `stop_reason: refusal`. O Haiku 5.5 não tem fallback do lado do servidor, então uma recusa é uma falha irrecuperável e vira Repeated Failure, como o glossário já define. O fallback fica desligado nas rodadas de eval.
 - Contrato de configuração (variáveis de ambiente):
   - `PET_HELPER_PROVIDER` (`anthropic` | `ollama`). Sem valor: `anthropic` se existir `ANTHROPIC_API_KEY`, senão `ollama`.
-  - `PET_HELPER_ASSISTANT_MODEL` e `PET_HELPER_JUDGE_MODEL`.
+  - `PET_HELPER_ASSISTANT_MODEL` (o modelo Anthropic do assistente), `PET_HELPER_OLLAMA_MODEL` (o modelo Ollama, primário e fallback; padrão `llama3.1:8b`) e `PET_HELPER_JUDGE_MODEL`.
   - `PET_HELPER_FALLBACK` (`ollama` | `none`).
   - `OLLAMA_BASE_URL`.
   - `PET_HELPER_EFFORT`.

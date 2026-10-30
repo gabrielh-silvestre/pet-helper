@@ -82,6 +82,13 @@ O contrato de variáveis de ambiente da §1 ganha `PET_HELPER_KIT_DIR`, com padr
 
 - Rodar as rodadas de eval com `PET_HELPER_FALLBACK=none` e contar a causa `model_unavailable` como `error`: fica com a unidade do runner de eval (decisão 2).
 - Um caso adversarial medindo o modelo repetindo um SKU inexistente afirmado pelo cliente: fica para a unidade de eval (decisão 3).
+- Um caso "reclamação comum não escala" (CPF válido, pedido Enviado dentro do prazo, "já faz 5 dias e nada, que demora, hein?", com `tool_not_called escalate_to_human` e juiz `escalation_judgment`), par de contraste de `esc-strong-negative-sentiment` e bom candidato a held-out: fica para a unidade de eval (decisão do critic na revisão local, premissa `docs-specs-assistant:01a18dfb-09c9-79fd-82a5-67160e68d817`).
+
+## Emendas na entrega
+
+- Histórico enviado ao modelo fica intacto (sem poda de tool calls de turnos anteriores); o checkpointer usa serde pickle porque o `model_dump` achata o `artifact` das `ToolMessage`s (premissa `docs-specs-assistant:01a18db8-6eb8-707d-8344-0f71ac53330b`).
+- Exceção na §2 para a regeneração do guard de saída, decidida pelo dono (gap `docs-specs-assistant:01a18db9-16c9-76b8-a11f-215f2a12e06f`).
+- `PET_HELPER_OLLAMA_MODEL` nomeia o modelo do Ollama (primário e fallback) e `PET_HELPER_ASSISTANT_MODEL` passa a ser só o modelo Anthropic (premissa `docs-specs-assistant:01a18dfa-f1b8-7951-994b-6f8e8d23d039`).
 
 ## Ajustes no plano
 

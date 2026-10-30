@@ -17,7 +17,7 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-    command: ["pull", "${PET_HELPER_ASSISTANT_MODEL:-llama3.1:8b}"]
+    command: ["pull", "${PET_HELPER_OLLAMA_MODEL:-llama3.1:8b}"]
 
   app:
     build: .
@@ -27,7 +27,7 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       PET_HELPER_PROVIDER: ollama
-      PET_HELPER_ASSISTANT_MODEL: ${PET_HELPER_ASSISTANT_MODEL:-llama3.1:8b}
+      PET_HELPER_OLLAMA_MODEL: ${PET_HELPER_OLLAMA_MODEL:-llama3.1:8b}
     stdin_open: true
     tty: true
 

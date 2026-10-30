@@ -2,16 +2,24 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
+import ollama
 import pytest
 from langchain_core.language_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from pet_helper.gateway import ModelResult, ModelUnavailable, OllamaGateway
+from pet_helper.gateway import (
+    ModelConfigError,
+    ModelResult,
+    ModelUnavailable,
+    OllamaGateway,
+    build_gateway,
+)
 
 OLLAMA_ENV_VARS = (
     "OLLAMA_BASE_URL",
     "PET_HELPER_PROVIDER",
     "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
     "PET_HELPER_FALLBACK",
 )
 
@@ -38,11 +46,33 @@ def _mock_ollama_chat_model(reply_text: str = "done") -> MagicMock:
 
 
 def test_it_should_default_the_ollama_model_to_llama3_1_8b(monkeypatch):
-    monkeypatch.delenv("PET_HELPER_ASSISTANT_MODEL", raising=False)
+    monkeypatch.delenv("PET_HELPER_OLLAMA_MODEL", raising=False)
 
     chat_model = _build_default_chat_model()
 
     assert chat_model.model == "llama3.1:8b"
+
+
+def test_it_should_read_the_ollama_model_from_pet_helper_ollama_model(monkeypatch):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "ollama")
+    monkeypatch.setenv("PET_HELPER_OLLAMA_MODEL", "llama3.2:3b")
+
+    gateway = build_gateway()
+
+    assert isinstance(gateway, OllamaGateway)
+    assert gateway.chat_model.model == "llama3.2:3b"
+
+
+def test_it_should_ignore_pet_helper_assistant_model_for_the_ollama_provider(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "ollama")
+    monkeypatch.setenv("PET_HELPER_ASSISTANT_MODEL", "claude-sonnet-5-5")
+
+    gateway = build_gateway()
+
+    assert isinstance(gateway, OllamaGateway)
+    assert gateway.chat_model.model == "llama3.1:8b"
 
 
 def test_it_should_set_an_explicit_8192_context_window_on_chat_ollama(monkeypatch):
@@ -274,3 +304,52 @@ def test_it_should_raise_model_unavailable_when_the_ollama_chat_model_fails():
         gateway.complete([HumanMessage("hello")])
 
     assert isinstance(exc_info.value, ModelUnavailable)
+
+
+def _failing_gateway(error: Exception) -> OllamaGateway:
+    chat_model = _mock_ollama_chat_model()
+    chat_model.invoke.side_effect = error
+    return OllamaGateway(chat_model=chat_model)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout(
+            "timed out", request=httpx.Request("POST", "http://localhost:11434")
+        ),
+        ConnectionError("connection refused"),
+        ollama.ResponseError("server error", 500),
+        ollama.ResponseError("unknown failure"),
+    ],
+    ids=["read-timeout", "builtin-connection-error", "http-500", "status-minus-one"],
+)
+def test_it_should_raise_model_unavailable_on_transport_and_server_errors(error):
+    gateway = _failing_gateway(error)
+
+    with pytest.raises(ModelUnavailable):
+        gateway.complete([HumanMessage("hello")])
+
+
+@pytest.mark.parametrize("status_code", [400, 404])
+def test_it_should_raise_model_config_error_on_a_client_error_response(status_code):
+    gateway = _failing_gateway(ollama.ResponseError("model not found", status_code))
+
+    with pytest.raises(ModelConfigError, match="model not found"):
+        gateway.complete([HumanMessage("hello")])
+
+
+def test_it_should_let_an_unexpected_exception_propagate_unchanged():
+    error = ValueError("bad message conversion")
+    gateway = _failing_gateway(error)
+
+    with pytest.raises(ValueError) as exc_info:
+        gateway.complete([HumanMessage("hello")])
+
+    assert exc_info.value is error
+
+
+def test_it_should_pass_a_request_timeout_to_the_ollama_client():
+    chat_model = _build_default_chat_model()
+
+    assert chat_model.client_kwargs.get("timeout") is not None

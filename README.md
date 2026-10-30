@@ -19,10 +19,10 @@ Para avaliar sem chave de API paga, o Docker Compose sobe o Ollama (`ollama/olla
 docker compose run --rm app
 ```
 
-Em máquinas com pouca RAM, sobrescreva a tag do modelo pela variável `PET_HELPER_ASSISTANT_MODEL`:
+Em máquinas com pouca RAM, sobrescreva a tag do modelo pela variável `PET_HELPER_OLLAMA_MODEL`:
 
 ```sh
-PET_HELPER_ASSISTANT_MODEL=llama3.2:3b docker compose run --rm app
+PET_HELPER_OLLAMA_MODEL=llama3.2:3b docker compose run --rm app
 ```
 
 Built with Llama (Meta Llama 3.1, sob a Llama 3.1 Community License).

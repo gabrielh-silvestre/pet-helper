@@ -37,6 +37,10 @@ _INJECTION_PATTERNS = tuple(
         r"\bsystem\s*prompt\b",
         r"\bprompt\s+de\s+sistema\b",
         r"\bmodo\s+(?:desenvolvedor|admin|administrador|sem\s+regras)\b",
+        r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier)\s+(?:instructions|rules|guidelines|prompts?)\b",
+        r"\byou\s+are\s+now\b",
+        r"\bpretend\s+(?:to\s+be|you\s+are)\b",
+        r"\b(?:developer|admin|jailbreak)\s+mode\b",
     )
 )
 

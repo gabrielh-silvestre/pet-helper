@@ -24,6 +24,7 @@ CLI_ENV_VARS = (
     "OLLAMA_BASE_URL",
     "PET_HELPER_PROVIDER",
     "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
     "PET_HELPER_EFFORT",
     "PET_HELPER_FALLBACK",
     "PET_HELPER_KIT_DIR",
@@ -301,6 +302,38 @@ def test_it_should_exit_with_one_printing_one_line_when_the_provider_is_unsuppor
     assert len(non_empty_lines) == 1
     assert "PET_HELPER_PROVIDER" in non_empty_lines[0]
     assert "Traceback" not in captured.err
+
+
+def test_it_should_exit_with_one_printing_one_line_when_anthropic_is_selected_without_a_key(
+    monkeypatch, capsys
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "anthropic")
+    _set_input_lines(monkeypatch, ["Olá"])
+
+    code = main(["chat"])
+
+    captured = capsys.readouterr()
+    stderr_lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert code == 1
+    assert len(stderr_lines) == 1
+    assert "ANTHROPIC_API_KEY" in stderr_lines[0]
+    assert "Traceback" not in captured.err
+
+
+def test_it_should_never_call_the_ollama_fallback_when_anthropic_is_selected_without_a_key(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "anthropic")
+    _set_input_lines(monkeypatch, ["Olá"])
+
+    def fail_on_complete(self, messages, tools=()):
+        pytest.fail("OllamaGateway.complete should not be called without a key")
+
+    monkeypatch.setattr(OllamaGateway, "complete", fail_on_complete)
+
+    code = main(["chat"])
+
+    assert code == 1
 
 
 def test_it_should_write_the_model_config_error_to_stderr_not_stdout(

@@ -3,20 +3,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
 from pet_helper.catalog import Catalog
-from pet_helper.conversation.graph import HANDOFF_REPLY, build_graph
+from pet_helper.conversation.graph import HANDOFF_REPLY, build_graph, handoff_state
 from pet_helper.conversation.state import EscalationReason
 from pet_helper.conversation.tools import ToolRegistry, build_tool_registry
 from pet_helper.gateway import ModelGateway, build_gateway
 from pet_helper.guard import Guard, extract_cited_titles, normalize_source_title
 from pet_helper.knowledge import PolicyHit, PolicyIndex
-from pet_helper.orders import OrderService
-from pet_helper.orders.api import MockOrderApi
+from pet_helper.orders import MockOrderApi, OrderService
 
 KIT_DIR_ENV = "PET_HELPER_KIT_DIR"
 DEFAULT_KIT_DIR = "kit"
@@ -47,6 +45,21 @@ def _cited_sources(text: str, retrieved: Sequence[PolicyHit]) -> tuple[str, ...]
     )
 
 
+def _default_registry(
+    policies: PolicyIndex | None,
+    catalog: Catalog | None,
+    orders: OrderService | None,
+) -> ToolRegistry:
+    services = (policies, catalog, orders)
+    if all(service is None for service in services):
+        return ToolRegistry()
+    if policies is None or catalog is None or orders is None:
+        raise ValueError(
+            "policies, catalog and orders must be given together, or pass a registry"
+        )
+    return build_tool_registry(policies=policies, catalog=catalog, orders=orders)
+
+
 class Assistant:
     def __init__(
         self,
@@ -58,12 +71,9 @@ class Assistant:
         orders: OrderService | None = None,
         registry: ToolRegistry | None = None,
     ):
+        # registry replaces the default tools: it is not merged with the services
         if registry is None:
-            registry = (
-                build_tool_registry(policies=policies, catalog=catalog, orders=orders)
-                if policies is not None and catalog is not None and orders is not None
-                else ToolRegistry()
-            )
+            registry = _default_registry(policies, catalog, orders)
         self._graph = build_graph(gateway, guard, registry.tools)
 
     @property
@@ -80,12 +90,7 @@ class Assistant:
         except GraphRecursionError:
             self._graph.update_state(
                 config,
-                {
-                    "messages": [AIMessage(HANDOFF_REPLY)],
-                    "escalation": "repeated_failure",
-                    "escalation_cause": "recursion_limit",
-                    "ended": True,
-                },
+                handoff_state(HANDOFF_REPLY, "recursion_limit"),
                 as_node="handoff",
             )
             state = self._graph.get_state(config).values

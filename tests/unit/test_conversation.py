@@ -5,8 +5,13 @@ from pathlib import Path
 import pytest
 
 import pet_helper.conversation as conversation
+from pet_helper.catalog import Catalog
 from pet_helper.conversation import Assistant, Reply
 from pet_helper.gateway import AnthropicGateway, FakeGateway, OllamaGateway
+from pet_helper.guard import Guard
+from pet_helper.knowledge import PolicyIndex
+from pet_helper.orders import OrderService
+from pet_helper.orders.api import MockOrderApi
 
 REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 
@@ -15,6 +20,7 @@ CONVERSATION_ENV_VARS = (
     "OLLAMA_BASE_URL",
     "PET_HELPER_PROVIDER",
     "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
     "PET_HELPER_EFFORT",
     "PET_HELPER_FALLBACK",
     "PET_HELPER_KIT_DIR",
@@ -198,3 +204,26 @@ def test_it_should_raise_a_single_line_error_naming_the_resolved_path_for_an_inc
     )
     assert str(empty_kit.resolve()) in message
     assert "\n" not in message
+
+
+@pytest.mark.parametrize(
+    "provided",
+    [("policies",), ("catalog", "orders")],
+    ids=["policies", "catalog+orders"],
+)
+def test_it_should_raise_a_clear_error_when_built_with_partial_services_and_no_registry(
+    provided,
+):
+    catalog = Catalog(REPO_KIT_DIR / "catalog.csv")
+    services = {
+        "policies": PolicyIndex.load(REPO_KIT_DIR / "policies"),
+        "catalog": catalog,
+        "orders": OrderService(MockOrderApi(REPO_KIT_DIR / "orders.json")),
+    }
+
+    with pytest.raises(ValueError, match="registry"):
+        Assistant(
+            FakeGateway(["ok"]),
+            Guard(catalog),
+            **{name: services[name] for name in provided},
+        )

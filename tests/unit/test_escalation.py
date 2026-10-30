@@ -260,3 +260,15 @@ def test_it_should_keep_answering_other_sessions_after_one_session_escalates():
 
     assert reply == Reply(text="Olá! Como posso ajudar?")
     assert len(gateway.calls) == 2
+
+
+def test_it_should_leave_no_raw_cpf_in_the_state_after_a_turn_following_an_escalation():
+    assistant, _ = _escalated_assistant("explicit_request")
+    assistant.turn(SESSION_ID, "Quero falar com alguém")
+
+    assistant.turn(SESSION_ID, "Meu CPF é 000.000.001-91, alguém me responde?")
+
+    values = assistant.graph.get_state(
+        {"configurable": {"thread_id": SESSION_ID}}
+    ).values
+    assert values["user_text"] == ""

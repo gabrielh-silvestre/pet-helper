@@ -5,11 +5,11 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 from pydantic import Field
 
-from pet_helper.catalog import Catalog
-from pet_helper.catalog.models import Product
+from pet_helper.catalog import Catalog, Product
 from pet_helper.conversation.state import EscalationReason
 from pet_helper.knowledge import PolicyHit, PolicyIndex
 from pet_helper.orders import (
+    ORDER_NUMBER_PATTERN,
     Cpf,
     Found,
     NeedsIdentification,
@@ -18,7 +18,11 @@ from pet_helper.orders import (
     OrderService,
     Unavailable,
 )
-from pet_helper.orders.models import ORDER_NUMBER_PATTERN
+
+SEARCH_POLICIES_TOOL = "search_policies"
+GET_ORDER_TOOL = "get_order"
+SEARCH_CATALOG_TOOL = "search_catalog"
+ESCALATE_TOOL = "escalate_to_human"
 
 _PRODUCT_FIELDS = {
     "sku",
@@ -53,7 +57,7 @@ class ToolRegistry:
 
 
 def _make_search_policies(policies: PolicyIndex) -> BaseTool:
-    @tool(response_format="content_and_artifact")
+    @tool(SEARCH_POLICIES_TOOL, response_format="content_and_artifact")
     def search_policies(query: str) -> tuple[str, list[PolicyHit]]:
         """Search the store policies (shipping, returns, refunds, cancellation, ...).
 
@@ -68,7 +72,7 @@ def _make_search_policies(policies: PolicyIndex) -> BaseTool:
 
 
 def _make_get_order(orders: OrderService) -> BaseTool:
-    @tool(response_format="content_and_artifact")
+    @tool(GET_ORDER_TOOL, response_format="content_and_artifact")
     def get_order(
         order_number: Annotated[str, Field(pattern=ORDER_NUMBER_PATTERN)],
         session_cpf: Annotated[str | None, InjectedState("session_cpf")] = None,
@@ -89,14 +93,16 @@ def _make_get_order(orders: OrderService) -> BaseTool:
 
 
 def _make_search_catalog(catalog: Catalog) -> BaseTool:
-    @tool(response_format="content_and_artifact")
+    @tool(SEARCH_CATALOG_TOOL, response_format="content_and_artifact")
     def search_catalog(
         query: str,
-        species: str | None = None,
-        category: str | None = None,
+        species: Literal["cão", "gato"] | None = None,
+        category: Literal["ração", "areia", "brinquedo", "acessório"] | None = None,
     ) -> tuple[str, list[Product]]:
         """Search the product catalog by name, optionally filtered by species and category.
 
+        species is cão or gato and also matches products made for both; category is
+        ração, areia, brinquedo or acessório.
         Returns SKU, name, category, species, price and whether it is in stock.
         """
         products = catalog.search(query, species=species, category=category)
@@ -110,7 +116,7 @@ def _make_search_catalog(catalog: Catalog) -> BaseTool:
 
 
 def _make_escalate_to_human() -> BaseTool:
-    @tool(response_format="content_and_artifact")
+    @tool(ESCALATE_TOOL, response_format="content_and_artifact")
     def escalate_to_human(
         reason: Literal[
             "animal_health_question", "strong_negative_sentiment", "explicit_request"

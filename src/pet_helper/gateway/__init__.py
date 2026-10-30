@@ -20,6 +20,7 @@ from pet_helper.gateway.ollama import OllamaGateway
 
 def build_gateway() -> ModelGateway:
     if resolve_provider() == "anthropic":
+        resolve_fallback()
         return AnthropicGateway()
     return OllamaGateway()
 

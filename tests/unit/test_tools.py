@@ -456,3 +456,73 @@ def test_it_should_surface_out_of_stock_status_in_search_catalog_output(
         marker in lowered
         for marker in ("false", "sem estoque", "esgotad", '"stock": 0', "stock=0")
     )
+
+
+def _enum_values(property_schema: dict[str, Any]) -> set[str]:
+    branches = [property_schema, *property_schema.get("anyOf", [])]
+    return {value for branch in branches for value in branch.get("enum", [])}
+
+
+@pytest.mark.parametrize(
+    ("field", "expected_values"),
+    [
+        ("species", {"cão", "gato"}),
+        ("category", {"ração", "areia", "brinquedo", "acessório"}),
+    ],
+)
+def test_it_should_expose_the_catalog_filter_values_as_an_enum_in_the_search_catalog_schema(
+    kit_services, field, expected_values
+):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    properties = convert_to_openai_tool(search_catalog)["function"]["parameters"][
+        "properties"
+    ]
+
+    assert _enum_values(properties[field]) == expected_values
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [{"species": "cachorro"}, {"category": "racao"}],
+    ids=["species", "category"],
+)
+def test_it_should_return_a_validation_error_for_a_catalog_filter_outside_the_enum(
+    kit_services, filters
+):
+    policies, catalog, orders = kit_services
+    search_catalog = _get_tool(
+        "search_catalog",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    message = _invoke_in_tool_node(search_catalog, {"query": "ração", **filters})
+
+    assert message.status == "error"
+
+
+@pytest.mark.parametrize("order_number", ["xPED-10001", "PED-10001y", "xPED-10001y"])
+def test_it_should_reject_an_order_number_with_extra_characters_around_a_valid_one(
+    kit_services, order_number
+):
+    policies, catalog, orders = kit_services
+    get_order = _get_tool(
+        "get_order",
+        policies=policies,
+        catalog=catalog,
+        orders=orders,
+    )
+
+    message = _invoke_in_tool_node(
+        get_order, {"order_number": order_number}, session_cpf=OWNER_CPF
+    )
+
+    assert message.status == "error"

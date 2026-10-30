@@ -12,6 +12,7 @@ from pet_helper.gateway import (
     ModelConfigError,
     ModelResult,
     ModelUnavailable,
+    build_gateway,
     resolve_fallback,
     resolve_provider,
 )
@@ -20,6 +21,7 @@ GATEWAY_ENV_VARS = (
     "ANTHROPIC_API_KEY",
     "PET_HELPER_PROVIDER",
     "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
     "PET_HELPER_EFFORT",
     "PET_HELPER_FALLBACK",
 )
@@ -359,3 +361,38 @@ def test_it_should_raise_a_clear_error_for_an_unsupported_fallback_value(monkeyp
         resolve_fallback()
 
     assert "openrouter" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_it_should_raise_model_config_error_naming_the_key_when_anthropic_is_selected_without_one(
+    monkeypatch, api_key
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "anthropic")
+    if api_key is not None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", api_key)
+
+    with pytest.raises(ModelConfigError, match="ANTHROPIC_API_KEY"):
+        build_gateway()
+
+
+def test_it_should_accept_an_injected_chat_model_without_an_api_key(monkeypatch):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "anthropic")
+    chat_model = FakeMessagesListChatModel(responses=[AIMessage("ok")])
+
+    gateway = AnthropicGateway(chat_model=chat_model)
+
+    assert gateway.chat_model is chat_model
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [("PET_HELPER_FALLBACK", "openrouter"), ("PET_HELPER_EFFORT", "turbo")],
+)
+def test_it_should_reject_an_invalid_gateway_setting_when_building_the_gateway(
+    monkeypatch, variable, value
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ModelConfigError, match=variable):
+        build_gateway()

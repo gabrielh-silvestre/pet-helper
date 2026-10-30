@@ -115,12 +115,19 @@ def _without_regeneration(messages: Sequence[BaseMessage]) -> list[RemoveMessage
     ]
 
 
-def _handoff_node(state: ConversationState) -> dict[str, Any]:
-    reply = _ALREADY_HANDED_OFF_REPLY if state.get("ended") else HANDOFF_REPLY
-    return {
+def handoff_state(reply: str, cause: str | None = None) -> dict[str, Any]:
+    state: dict[str, Any] = {
         "messages": [AIMessage(reply)],
+        "user_text": "",
         "ended": True,
     }
+    return state if cause is None else {**state, **_repeated_failure(cause)}
+
+
+def _handoff_node(state: ConversationState) -> dict[str, Any]:
+    return handoff_state(
+        _ALREADY_HANDED_OFF_REPLY if state.get("ended") else HANDOFF_REPLY
+    )
 
 
 def build_graph(
