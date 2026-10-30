@@ -1,4 +1,5 @@
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,9 +9,10 @@ from langgraph.graph.state import CompiledStateGraph
 from pet_helper.catalog import Catalog
 from pet_helper.conversation.graph import build_graph
 from pet_helper.conversation.state import EscalationReason
+from pet_helper.conversation.tools import ToolRegistry, build_tool_registry
 from pet_helper.gateway import ModelGateway, build_gateway
-from pet_helper.guard import Guard
-from pet_helper.knowledge import PolicyIndex
+from pet_helper.guard import Guard, extract_cited_titles, normalize_source_title
+from pet_helper.knowledge import PolicyHit, PolicyIndex
 from pet_helper.orders import OrderService
 from pet_helper.orders.api import MockOrderApi
 
@@ -29,6 +31,18 @@ class Reply:
     escalation: EscalationReason | None = None
 
 
+def _cited_sources(text: str, retrieved: Sequence[PolicyHit]) -> tuple[str, ...]:
+    source_by_title = {
+        normalize_source_title(hit.title): hit.source for hit in retrieved
+    }
+    cited = (normalize_source_title(title) for title in extract_cited_titles(text))
+    return tuple(
+        dict.fromkeys(
+            source_by_title[title] for title in cited if title in source_by_title
+        )
+    )
+
+
 class Assistant:
     def __init__(
         self,
@@ -38,11 +52,15 @@ class Assistant:
         policies: PolicyIndex | None = None,
         catalog: Catalog | None = None,
         orders: OrderService | None = None,
+        registry: ToolRegistry | None = None,
     ):
-        self._policies = policies
-        self._catalog = catalog
-        self._orders = orders
-        self._graph = build_graph(gateway, guard)
+        if registry is None:
+            registry = (
+                build_tool_registry(policies=policies, catalog=catalog, orders=orders)
+                if policies is not None and catalog is not None and orders is not None
+                else ToolRegistry()
+            )
+        self._graph = build_graph(gateway, guard, registry.tools)
 
     @property
     def graph(self) -> CompiledStateGraph:
@@ -54,7 +72,7 @@ class Assistant:
         last_message = state["messages"][-1]
         return Reply(
             text=str(last_message.text),
-            sources=(),
+            sources=_cited_sources(last_message.text, state.get("retrieved", ())),
             escalation=state.get("escalation"),
         )
 
@@ -88,7 +106,10 @@ def _load_kit(kit_dir: Path) -> tuple[PolicyIndex, Catalog, OrderService]:
     )
 
 
-def build_assistant(gateway: ModelGateway | None = None) -> Assistant:
+def build_assistant(
+    gateway: ModelGateway | None = None,
+    registry: ToolRegistry | None = None,
+) -> Assistant:
     policies, catalog, orders = _load_kit(_resolve_kit_dir())
     selected_gateway = gateway if gateway is not None else build_gateway()
     return Assistant(
@@ -97,4 +118,5 @@ def build_assistant(gateway: ModelGateway | None = None) -> Assistant:
         policies=policies,
         catalog=catalog,
         orders=orders,
+        registry=registry,
     )

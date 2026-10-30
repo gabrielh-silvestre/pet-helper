@@ -1,17 +1,31 @@
+import pickle
 from collections.abc import Sequence
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode
 
+from pet_helper.conversation.prompt import SYSTEM_PROMPT
+from pet_helper.conversation.record import record_node
 from pet_helper.conversation.state import ConversationState
 from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard
 
 _HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
+
+
+class _PickleSerializer(JsonPlusSerializer):
+    # shortcut: pickle only for the in-memory saver (artifacts keep their types, history stays prefix-stable); replace with a typed serde before any persistent checkpointer
+    def __init__(self) -> None:
+        super().__init__(pickle_fallback=True)
+
+    def dumps_typed(self, obj: Any) -> tuple[str, bytes]:
+        return "pickle", pickle.dumps(obj)
 
 
 def _input_gate_node(state: ConversationState) -> dict[str, Any]:
@@ -42,14 +56,6 @@ def _route_after_agent(state: ConversationState) -> str:
         if isinstance(last_message, AIMessage) and last_message.tool_calls:
             return "tools"
     return "output_guard"
-
-
-def _tools_node(state: ConversationState) -> dict[str, Any]:
-    return {}
-
-
-def _record_node(state: ConversationState) -> dict[str, Any]:
-    return {"tool_rounds": state.get("tool_rounds", 0) + 1}
 
 
 def _route_after_record(state: ConversationState) -> str:
@@ -90,7 +96,10 @@ def build_graph(
 
     def agent_node(state: ConversationState) -> dict[str, Any]:
         try:
-            result = gateway.complete(state.get("messages", ()), tools)
+            # o histórico segue sem reescrita, para o prefixo ficar estável entre chamadas
+            result = gateway.complete(
+                [SystemMessage(SYSTEM_PROMPT), *state.get("messages", ())], tools
+            )
         except ModelUnavailable:
             return {
                 "escalation": "repeated_failure",
@@ -109,8 +118,8 @@ def build_graph(
     builder.add_node("input_gate", _input_gate_node)
     builder.add_node("input_guard", input_guard_node)
     builder.add_node("agent", agent_node)
-    builder.add_node("tools", _tools_node)
-    builder.add_node("record", _record_node)
+    builder.add_node("tools", ToolNode(tools, handle_tool_errors=True))
+    builder.add_node("record", record_node)
     builder.add_node("output_guard", _output_guard_node)
     builder.add_node("handoff", _handoff_node)
 
@@ -139,5 +148,9 @@ def build_graph(
     )
     builder.add_edge("handoff", END)
 
-    active_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
+    active_checkpointer = (
+        checkpointer
+        if checkpointer is not None
+        else InMemorySaver(serde=_PickleSerializer())
+    )
     return builder.compile(checkpointer=active_checkpointer)
