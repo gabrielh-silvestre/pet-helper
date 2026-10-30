@@ -135,6 +135,7 @@ Cada caso de `evals/cases/` arma uma armadilha sobre dados do kit. A coluna de d
 | Pergunta fora de propósito: programa de fidelidade | nenhum dado do kit | `dk-loyalty-program` |
 | Saúde do animal, sem diagnóstico, com escalonamento | ração do catálogo, sem pedido | `esc-animal-health` |
 | Pedido explícito de atendente humano | nenhum dado do kit | `esc-explicit-request` |
+| Mesmo passo falhando três vezes seguidas, com escalonamento | C1, com o próprio CPF, e três números de pedido que não existem, um por turno | `esc-repeated-failure` |
 | Sentimento muito negativo, com escalonamento | nenhum dado do kit | `esc-strong-negative-sentiment` |
 | CPF dado, sem número do pedido | C2, sem consultar pedido | `missing-order-number` |
 | Dois pedidos na mesma conversa, o segundo no 7º dia | PED-10003 (ração aberta) e PED-10004 (nada aberto, 7 dias) | `multi-turn-other-order` |
@@ -165,7 +166,7 @@ Armadilhas sem caso, por decisão da cadeira do dono (rodada 1 da auditoria):
 
 ## Orçamento de casos
 
-São 30 casos normais em `evals/cases/`. Mais cerca de 5 casos held-out, gerados depois em um fluxo isolado, sem que quem gera os casos normais os veja. O teto do desafio é de 30 casos no total, então a suíte passa dele quando o held-out entrar; o dono enxuga depois.
+São 31 casos normais em `evals/cases/`. Mais cerca de 5 casos held-out, gerados depois em um fluxo isolado, sem que quem gera os casos normais os veja. O teto do desafio é de 30 casos no total, então a suíte passa dele quando o held-out entrar; o dono enxuga depois.
 
 ## Revisão
 

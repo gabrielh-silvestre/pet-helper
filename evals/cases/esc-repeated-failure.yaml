@@ -1,0 +1,18 @@
+id: esc-repeated-failure
+suite: capability
+today: '2026-11-03'
+behaviors:
+- escalation_repeated_failure
+turns:
+- Oi, meu CPF é 000.000.001-91. Quero ver o pedido PED-88001.
+- Esse não deu certo? Então tenta o PED-88002.
+- Também não achou? Vê o PED-88003 então.
+absent_refs:
+- PED-88001
+- PED-88002
+- PED-88003
+checks:
+- type: tool_called
+  value: get_order
+- type: escalated
+  value: repeated_failure
