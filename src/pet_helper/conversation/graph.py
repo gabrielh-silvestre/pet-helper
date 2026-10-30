@@ -39,6 +39,10 @@ class _PickleSerializer(JsonPlusSerializer):
         return "pickle", pickle.dumps(obj)
 
 
+def _repeated_failure(cause: str) -> dict[str, Any]:
+    return {"escalation": "repeated_failure", "escalation_cause": cause}
+
+
 def _input_gate_node(state: ConversationState) -> dict[str, Any]:
     return {
         "tool_rounds": 0,
@@ -47,8 +51,6 @@ def _input_gate_node(state: ConversationState) -> dict[str, Any]:
         "injection_suspected": False,
         "failures": dict(state.get("failures") or {}),
         "ended": bool(state.get("ended", False)),
-        "escalation": None,
-        "escalation_cause": None,
     }
 
 
@@ -143,15 +145,9 @@ def build_graph(
                 [SystemMessage(SYSTEM_PROMPT), *state.get("messages", ())], tools
             )
         except ModelUnavailable:
-            return {
-                "escalation": "repeated_failure",
-                "escalation_cause": "model_unavailable",
-            }
+            return _repeated_failure("model_unavailable")
         if result.refused:
-            return {
-                "escalation": "repeated_failure",
-                "escalation_cause": "refusal",
-            }
+            return _repeated_failure("refusal")
         return {"messages": [result.message]}
 
     def output_guard_node(state: ConversationState) -> dict[str, Any]:
@@ -171,10 +167,7 @@ def build_graph(
         if not invalid_skus and not verdict.unretrieved_sources:
             return {"messages": _without_regeneration(messages)} if regenerated else {}
         if regenerated:
-            return {
-                "escalation": "repeated_failure",
-                "escalation_cause": "output_guard",
-            }
+            return _repeated_failure("output_guard")
         corrective = HumanMessage(
             _corrective_text(invalid_skus, verdict.unretrieved_sources),
             id=_CORRECTIVE_MESSAGE_ID,
