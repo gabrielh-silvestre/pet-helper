@@ -62,6 +62,10 @@ def _extract_first_valid_cpf(text: str) -> str | None:
     return None
 
 
+def extract_skus(text: str) -> list[str]:
+    return list(dict.fromkeys(_SKU_IN_TEXT_REGEX.findall(text)))
+
+
 def _has_injection_signal(text: str) -> bool:
     folded = fold_text(text)
     return any(pattern.search(folded) is not None for pattern in _INJECTION_PATTERNS)
@@ -164,9 +168,7 @@ class Guard:
         retrieved_sources: Iterable[str],
     ) -> OutputVerdict:
         invalid_skus = [
-            sku
-            for sku in dict.fromkeys(_SKU_IN_TEXT_REGEX.findall(text))
-            if not self._catalog.exists(sku)
+            sku for sku in extract_skus(text) if not self._catalog.exists(sku)
         ]
         allowed_titles = {
             normalize_source_title(source) for source in retrieved_sources

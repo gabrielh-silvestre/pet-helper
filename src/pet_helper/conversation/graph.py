@@ -2,7 +2,13 @@ import pickle
 from collections.abc import Sequence
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+)
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -14,13 +20,14 @@ from pet_helper.conversation.prompt import SYSTEM_PROMPT
 from pet_helper.conversation.record import record_node
 from pet_helper.conversation.state import ConversationState
 from pet_helper.gateway import ModelGateway, ModelUnavailable
-from pet_helper.guard import Guard
+from pet_helper.guard import Guard, extract_skus
 
 HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
 _ALREADY_HANDED_OFF_REPLY = (
     "Sua conversa já foi encaminhada para um atendente humano, que dará "
     "continuidade ao atendimento."
 )
+_CORRECTIVE_MESSAGE_ID = "output-guard-corrective"
 
 
 class _PickleSerializer(JsonPlusSerializer):
@@ -68,12 +75,42 @@ def _route_after_record(state: ConversationState) -> str:
     return "agent"
 
 
-def _output_guard_node(state: ConversationState) -> dict[str, Any]:
-    return {}
-
-
 def _route_after_output_guard(state: ConversationState) -> str:
+    if state.get("escalation") is not None:
+        return "handoff"
+    if state["messages"][-1].id == _CORRECTIVE_MESSAGE_ID:
+        return "agent"
     return END
+
+
+def _corrective_text(
+    invalid_skus: Sequence[str], unretrieved_sources: Sequence[str]
+) -> str:
+    problems = []
+    if invalid_skus:
+        problems.append(f"SKUs que não existem no catálogo: {', '.join(invalid_skus)}")
+    if unretrieved_sources:
+        problems.append(
+            "fontes que não foram recuperadas por search_policies: "
+            f"{', '.join(unretrieved_sources)}"
+        )
+    return (
+        f"Sua resposta anterior citou {'; '.join(problems)}. Reescreva a resposta "
+        "sem eles, usando só SKUs devolvidos por search_catalog e fontes "
+        "recuperadas por search_policies."
+    )
+
+
+def _without_regeneration(messages: Sequence[BaseMessage]) -> list[RemoveMessage]:
+    ids = [message.id for message in messages]
+    if _CORRECTIVE_MESSAGE_ID not in ids:
+        return []
+    corrective_index = ids.index(_CORRECTIVE_MESSAGE_ID)
+    return [
+        RemoveMessage(id=message.id)
+        for message in messages[corrective_index - 1 : corrective_index + 1]
+        if message.id is not None
+    ]
 
 
 def _handoff_node(state: ConversationState) -> dict[str, Any]:
@@ -117,13 +154,40 @@ def build_graph(
             }
         return {"messages": [result.message]}
 
+    def output_guard_node(state: ConversationState) -> dict[str, Any]:
+        messages = state.get("messages", [])
+        customer_skus = {
+            sku
+            for message in messages
+            if isinstance(message, HumanMessage)
+            and message.id != _CORRECTIVE_MESSAGE_ID
+            for sku in extract_skus(message.text)
+        }
+        verdict = guard.check_reply(
+            messages[-1].text, [hit.title for hit in state.get("retrieved", ())]
+        )
+        invalid_skus = [sku for sku in verdict.invalid_skus if sku not in customer_skus]
+        regenerated = state.get("regen_used", False)
+        if not invalid_skus and not verdict.unretrieved_sources:
+            return {"messages": _without_regeneration(messages)} if regenerated else {}
+        if regenerated:
+            return {
+                "escalation": "repeated_failure",
+                "escalation_cause": "output_guard",
+            }
+        corrective = HumanMessage(
+            _corrective_text(invalid_skus, verdict.unretrieved_sources),
+            id=_CORRECTIVE_MESSAGE_ID,
+        )
+        return {"messages": [corrective], "regen_used": True}
+
     builder = StateGraph(ConversationState)
     builder.add_node("input_gate", _input_gate_node)
     builder.add_node("input_guard", input_guard_node)
     builder.add_node("agent", agent_node)
     builder.add_node("tools", ToolNode(tools, handle_tool_errors=True))
     builder.add_node("record", record_node)
-    builder.add_node("output_guard", _output_guard_node)
+    builder.add_node("output_guard", output_guard_node)
     builder.add_node("handoff", _handoff_node)
 
     builder.add_edge(START, "input_gate")

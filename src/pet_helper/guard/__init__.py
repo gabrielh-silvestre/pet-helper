@@ -3,6 +3,7 @@ from pet_helper.guard.service import (
     InputVerdict,
     OutputVerdict,
     extract_cited_titles,
+    extract_skus,
     normalize_source_title,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "InputVerdict",
     "OutputVerdict",
     "extract_cited_titles",
+    "extract_skus",
     "normalize_source_title",
 ]
