@@ -3,11 +3,18 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage
 
 import pet_helper.cli
 import pet_helper.conversation
 from pet_helper.cli import main
-from pet_helper.gateway import AnthropicGateway, FakeGateway, OllamaGateway
+from pet_helper.conversation.graph import HANDOFF_REPLY
+from pet_helper.gateway import (
+    AnthropicGateway,
+    FakeGateway,
+    ModelConfigError,
+    OllamaGateway,
+)
 
 REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 SCRIPTED_REPLY = "Olá! Posso ajudar com políticas, pedidos ou produtos."
@@ -196,6 +203,114 @@ def test_it_should_exit_with_one_printing_one_line_when_the_kit_is_missing(
     assert len(non_empty_lines) == 1
     assert "Traceback" not in combined
     assert str(missing_kit.resolve()) in non_empty_lines[0]
+
+
+def _escalation_call(reason):
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "escalate_to_human",
+                "args": {"reason": reason},
+                "id": "call_escalate_1",
+            }
+        ],
+    )
+
+
+def test_it_should_print_the_handoff_reply_when_a_turn_escalates(monkeypatch, capsys):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+
+    _run_chat(monkeypatch, ["Quero falar com um atendente"], gateway)
+
+    assert HANDOFF_REPLY in capsys.readouterr().out.splitlines()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["animal_health_question", "strong_negative_sentiment", "explicit_request"],
+)
+def test_it_should_print_a_marker_naming_the_reason_after_the_handoff_reply(
+    monkeypatch, capsys, reason
+):
+    gateway = FakeGateway([_escalation_call(reason)])
+
+    _run_chat(monkeypatch, ["Preciso de ajuda"], gateway)
+
+    lines = capsys.readouterr().out.splitlines()
+    marker_line = lines[lines.index(HANDOFF_REPLY) + 1]
+    assert "escalonado" in marker_line
+    assert reason in marker_line
+
+
+def test_it_should_end_the_session_with_zero_after_an_escalated_turn(monkeypatch):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+
+    code = _run_chat(
+        monkeypatch,
+        ["Quero falar com um atendente"],
+        gateway,
+        exhausted=KeyboardInterrupt,
+    )
+
+    assert code == 0
+
+
+def test_it_should_not_read_another_line_after_an_escalated_turn(monkeypatch):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+    lines_read: list[str] = []
+
+    def recorded_lines():
+        for line in ["Quero falar com um atendente", "Olá de novo"]:
+            lines_read.append(line)
+            yield line
+
+    _run_chat(monkeypatch, recorded_lines(), gateway)
+
+    assert lines_read == ["Quero falar com um atendente"]
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_model_config_is_rejected(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelConfigError("Anthropic rejected the API key (401)")])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
+
+    captured = capsys.readouterr()
+    stderr_lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert code == 1
+    assert len(stderr_lines) == 1
+    assert "Anthropic rejected the API key (401)" in stderr_lines[0]
+    assert "Traceback" not in captured.err
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_provider_is_unsupported(
+    monkeypatch, capsys
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "bogus")
+    _set_input_lines(monkeypatch, [])
+
+    code = main(["chat"])
+
+    captured = capsys.readouterr()
+    non_empty_lines = [
+        line for line in f"{captured.out}{captured.err}".splitlines() if line.strip()
+    ]
+    assert code == 1
+    assert len(non_empty_lines) == 1
+    assert "PET_HELPER_PROVIDER" in non_empty_lines[0]
+    assert "Traceback" not in captured.err
+
+
+def test_it_should_write_the_model_config_error_to_stderr_not_stdout(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelConfigError("Anthropic rejected the API key (401)")])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert "Anthropic rejected the API key (401)" not in capsys.readouterr().out
 
 
 def test_it_should_exit_with_zero_on_end_of_input(monkeypatch):

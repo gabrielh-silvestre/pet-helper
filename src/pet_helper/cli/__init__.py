@@ -4,21 +4,30 @@ from collections.abc import Sequence
 from uuid import uuid4
 
 from pet_helper.conversation import KitError, build_assistant
+from pet_helper.gateway import ModelConfigError
 
 
 def _chat() -> int:
     try:
-        assistant = build_assistant()
-    except KitError as exc:
+        return _converse()
+    except (KitError, ModelConfigError) as exc:
         print(exc, file=sys.stderr)
         return 1
 
+
+def _converse() -> int:
+    assistant = build_assistant()
     session_id = uuid4().hex
     while True:
         try:
             line = input("> ").strip()
-            if line:
-                print(assistant.turn(session_id, line).text)
+            if not line:
+                continue
+            reply = assistant.turn(session_id, line)
+            print(reply.text)
+            if reply.escalation:
+                print(f"[escalonado: {reply.escalation}]")
+                return 0
         except EOFError:
             print()
             return 0
