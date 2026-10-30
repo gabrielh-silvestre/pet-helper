@@ -1,35 +1,41 @@
-from collections.abc import Sequence
-from dataclasses import dataclass
-from itertools import cycle
-from typing import Protocol
-
-from langchain_core.messages import AIMessage, BaseMessage
-
-DEFAULT_REPLY = "Olá! Sou o esqueleto do pet-helper e ainda não respondo perguntas."
-
-
-@dataclass(frozen=True)
-class ModelResult:
-    message: AIMessage
-
-
-class ModelGateway(Protocol):
-    def complete(
-        self, messages: Sequence[BaseMessage], tools: Sequence = ()
-    ) -> ModelResult: ...
-
-
-class FakeGateway:
-    def __init__(self, replies: Sequence[str] = (DEFAULT_REPLY,)):
-        self._replies = cycle(replies)
-        self.calls: list[list[BaseMessage]] = []
-
-    def complete(
-        self, messages: Sequence[BaseMessage], tools: Sequence = ()
-    ) -> ModelResult:
-        self.calls.append(list(messages))
-        return ModelResult(AIMessage(next(self._replies)))
+from pet_helper.gateway.anthropic import AnthropicGateway
+from pet_helper.gateway.config import (
+    FallbackMode,
+    ProviderName,
+    resolve_fallback,
+    resolve_provider,
+)
+from pet_helper.gateway.fake import (
+    FakeGateway,
+    FakeScriptExhaustedError,
+)
+from pet_helper.gateway.models import (
+    ModelConfigError,
+    ModelGateway,
+    ModelResult,
+    ModelUnavailable,
+)
+from pet_helper.gateway.ollama import OllamaGateway
 
 
-def default_gateway() -> ModelGateway:
-    return FakeGateway()
+def build_gateway() -> ModelGateway:
+    if resolve_provider() == "anthropic":
+        return AnthropicGateway()
+    return OllamaGateway()
+
+
+__all__ = [
+    "AnthropicGateway",
+    "FakeGateway",
+    "FakeScriptExhaustedError",
+    "FallbackMode",
+    "ModelConfigError",
+    "ModelGateway",
+    "ModelResult",
+    "ModelUnavailable",
+    "OllamaGateway",
+    "ProviderName",
+    "build_gateway",
+    "resolve_fallback",
+    "resolve_provider",
+]

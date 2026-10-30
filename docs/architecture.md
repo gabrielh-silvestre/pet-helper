@@ -18,6 +18,7 @@ Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 2
   - `PET_HELPER_FALLBACK` (`ollama` | `none`).
   - `OLLAMA_BASE_URL`.
   - `PET_HELPER_EFFORT`.
+  - `PET_HELPER_KIT_DIR`: diretório do kit de dados (padrão `kit`, relativo ao diretório de trabalho).
 - Estimativa de custo. É uma premissa: os valores medidos a substituem.
   - Preços: Haiku 5.5 a US$ 0,10 por MTok de entrada e US$ 0,50 de saída (prompt de até 100K), cache read a US$ 0,01 e escrita de 5 min a US$ 0,125. Sonnet 5.5 a US$ 2 e US$ 10, cache read a US$ 0,10. Batch com 50% de desconto: Sonnet a US$ 1 e US$ 5.
   - Conversa de 4 turnos: cerca de 6 chamadas, cada uma com uns 3,9K tokens de entrada e uns 250 de saída. Dá cerca de US$ 0,003 sem cache, ou R$ 0,02.

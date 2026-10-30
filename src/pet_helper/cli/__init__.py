@@ -1,17 +1,24 @@
 import argparse
+import sys
 from collections.abc import Sequence
+from uuid import uuid4
 
-from pet_helper.conversation import Assistant
-from pet_helper.gateway import default_gateway
+from pet_helper.conversation import KitError, build_assistant
 
 
 def _chat() -> int:
-    assistant = Assistant(default_gateway())
+    try:
+        assistant = build_assistant()
+    except KitError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    session_id = uuid4().hex
     while True:
         try:
             line = input("> ").strip()
             if line:
-                print(assistant.turn("cli", line).text)
+                print(assistant.turn(session_id, line).text)
         except EOFError:
             print()
             return 0
