@@ -14,10 +14,11 @@ Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 2
 - Fallback em execução: da Anthropic para o Ollama, só em erro de transporte (conexão, timeout, 429, 5xx ou 529) e depois de 1 retry do SDK. Nunca em 4xx nem em `stop_reason: refusal`. O Haiku 5.5 não tem fallback do lado do servidor, então uma recusa é uma falha irrecuperável e vira Repeated Failure, como o glossário já define. O fallback fica desligado nas rodadas de eval.
 - Contrato de configuração (variáveis de ambiente):
   - `PET_HELPER_PROVIDER` (`anthropic` | `ollama`). Sem valor: `anthropic` se existir `ANTHROPIC_API_KEY`, senão `ollama`.
-  - `PET_HELPER_ASSISTANT_MODEL` e `PET_HELPER_JUDGE_MODEL`.
+  - `PET_HELPER_ASSISTANT_MODEL` (o modelo Anthropic do assistente), `PET_HELPER_OLLAMA_MODEL` (o modelo Ollama, primário e fallback; padrão `llama3.1:8b`) e `PET_HELPER_JUDGE_MODEL`.
   - `PET_HELPER_FALLBACK` (`ollama` | `none`).
   - `OLLAMA_BASE_URL`.
   - `PET_HELPER_EFFORT`.
+  - `PET_HELPER_KIT_DIR`: diretório do kit de dados (padrão `kit`, relativo ao diretório de trabalho).
 - Estimativa de custo. É uma premissa: os valores medidos a substituem.
   - Preços: Haiku 5.5 a US$ 0,10 por MTok de entrada e US$ 0,50 de saída (prompt de até 100K), cache read a US$ 0,01 e escrita de 5 min a US$ 0,125. Sonnet 5.5 a US$ 2 e US$ 10, cache read a US$ 0,10. Batch com 50% de desconto: Sonnet a US$ 1 e US$ 5.
   - Conversa de 4 turnos: cerca de 6 chamadas, cada uma com uns 3,9K tokens de entrada e uns 250 de saída. Dá cerca de US$ 0,003 sem cache, ou R$ 0,02.
@@ -58,7 +59,7 @@ O Haiku 5.5 é o modelo fraco e barato que a premissa `qualidade-vem-do-sistema`
 - O pedido entra no trace e no modelo como `OrderView`, com uma allowlist de campos: número, status, itens, total, região, meio de pagamento, data de entrega e dias desde a entrega. Nome e endereço nunca saem do módulo de pedidos.
 - O CPF digitado pelo cliente é trocado por `[CPF informado]` antes de chegar ao modelo. O backend guarda o CPF no estado da sessão como Session Customer.
 - Um teste sem modelo varre os traces de exemplo atrás de padrões de CPF e e-mail.
-- O histórico da conversa nunca é reescrito depois de enviado: a máscara acontece antes do envio e no sink. Reescrever o histórico invalidaria os blocos de thinking e o cache.
+- O histórico da conversa nunca é reescrito depois de enviado: a máscara acontece antes do envio e no sink. Reescrever o histórico invalidaria os blocos de thinking e o cache. Exceção, decidida pelo dono em 2026-10-30: depois de uma regeneração bem-sucedida do guard de saída, a resposta inválida e a mensagem corretiva saem do histórico com `RemoveMessage`. Só o fim do turno atual muda, então o prefixo em cache até a mensagem do cliente continua válido. Os blocos de thinking assinados, porém, dependem de tudo o que veio antes deles: por isso, na mesma regeneração, as mensagens do assistente que sobram depois da corretiva perdem os blocos `thinking` e `redacted_thinking` (copiadas sem eles, com o mesmo `id`), e isso só acontece depois que a resposta regenerada passa no guard. Emenda aprovada pelo dono em 2026-10-30.
 - Os eventos `model.call` e `tool.call` vêm de um `BaseCallbackHandler` do LangChain (TTFT, duração, `usage_metadata`, erro de tool). O `input_tokens` gravado é o do LangChain, que já soma cache read e write. Os eventos do domínio são emitidos pelo próprio código.
 - O comando `pet-helper metrics <pasta>` lê os JSONL, sem chamar modelo, e imprime uma tabela por provider e modelo:
   - chamadas;

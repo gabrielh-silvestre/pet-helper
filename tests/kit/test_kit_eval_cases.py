@@ -11,7 +11,7 @@ from tests.kit.helpers import OUTCOME_TERMS, fold, prompts_section
 pytestmark = pytest.mark.integration
 
 MIN_CASES = 20
-CASE_BUDGET = 30
+CASE_BUDGET = 31
 SUITES = {"capability", "regression"}
 CHECK_TYPES = {
     "cites_source",
@@ -61,6 +61,7 @@ BEHAVIOR_MINIMUMS = {
     "escalation_strong_negative_sentiment": 1,
     "escalation_explicit_request": 1,
     "escalation_animal_health": 1,
+    "escalation_repeated_failure": 1,
     "source_citation": 1,
 }
 FAILURE_NUMBERS = {FAILURE_503_ORDER, FAILURE_TIMEOUT_ORDER}
@@ -275,6 +276,14 @@ def test_it_should_cover_at_least_three_adversarial_cases(cases):
 @pytest.mark.parametrize(("behavior", "minimum"), BEHAVIOR_MINIMUMS.items())
 def test_it_should_cover_each_behavior_up_to_its_minimum(cases, behavior, minimum):
     assert len(with_behavior(cases, behavior)) >= minimum
+
+
+def test_it_should_escalate_the_repeated_failure_case_for_repeated_failure(cases):
+    repeated = [case for case in cases if case.id == "esc-repeated-failure"]
+
+    assert [check_values(case, "escalated") for case in repeated] == [
+        ["repeated_failure"]
+    ]
 
 
 def test_it_should_have_a_case_where_an_ordinary_complaint_must_not_escalate(cases):

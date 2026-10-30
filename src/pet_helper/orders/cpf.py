@@ -1,6 +1,6 @@
 import re
 
-_CPF_FORMAT = re.compile(r"\d{3}\.?\d{3}\.?\d{3}-?\d{2}", re.ASCII)
+_CPF_FORMAT = re.compile(r"(?<![0-9])[0-9]{3}\.?[0-9]{3}\.?[0-9]{3}-?[0-9]{2}(?![0-9])")
 
 
 def normalize_cpf(text: str) -> str:

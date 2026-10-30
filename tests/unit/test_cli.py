@@ -1,23 +1,46 @@
+import sys
 from importlib.metadata import entry_points
+from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage
 
 import pet_helper.cli
+import pet_helper.conversation
 from pet_helper.cli import main
-from pet_helper.gateway import DEFAULT_REPLY, FakeGateway
+from pet_helper.conversation.graph import HANDOFF_REPLY
+from pet_helper.gateway import (
+    AnthropicGateway,
+    FakeGateway,
+    ModelConfigError,
+    ModelResult,
+    ModelUnavailable,
+    OllamaGateway,
+)
 
-SCRIPTED_REPLY = "scripted by the test"
+REPO_KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
+SCRIPTED_REPLY = "Olá! Posso ajudar com políticas, pedidos ou produtos."
+
+CLI_ENV_VARS = (
+    "ANTHROPIC_API_KEY",
+    "OLLAMA_BASE_URL",
+    "PET_HELPER_PROVIDER",
+    "PET_HELPER_ASSISTANT_MODEL",
+    "PET_HELPER_OLLAMA_MODEL",
+    "PET_HELPER_EFFORT",
+    "PET_HELPER_FALLBACK",
+    "PET_HELPER_KIT_DIR",
+)
 
 
-class _InterruptingGateway:
-    """Simulates Ctrl-C arriving while the model call is in flight."""
+@pytest.fixture(autouse=True)
+def _configure_cli_env(monkeypatch):
+    for name in CLI_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
 
-    def complete(self, messages, tools=()):
-        raise KeyboardInterrupt
 
-
-def _run_chat(monkeypatch, lines, gateway, exhausted=EOFError):
-    """Feeds `lines` to input() and raises `exhausted` when they run out."""
+def _set_input_lines(monkeypatch, lines, exhausted=EOFError):
     pending = iter(lines)
 
     def fake_input(prompt=""):
@@ -27,33 +50,138 @@ def _run_chat(monkeypatch, lines, gateway, exhausted=EOFError):
             raise exhausted from None
 
     monkeypatch.setattr("builtins.input", fake_input)
-    monkeypatch.setattr(pet_helper.cli, "default_gateway", lambda: gateway)
+
+
+def _patch_build_assistant(monkeypatch, replacement):
+    monkeypatch.setattr(pet_helper.conversation, "build_assistant", replacement)
+    for mod_name, mod in list(sys.modules.items()):
+        if (
+            mod_name == "pet_helper.cli" or mod_name.startswith("pet_helper.cli.")
+        ) and hasattr(mod, "build_assistant"):
+            monkeypatch.setattr(mod, "build_assistant", replacement)
+
+
+def _run_chat(monkeypatch, lines, gateway, exhausted=EOFError):
+    _set_input_lines(monkeypatch, lines, exhausted=exhausted)
+    real_build_assistant = pet_helper.conversation.build_assistant
+    _patch_build_assistant(
+        monkeypatch,
+        lambda: real_build_assistant(gateway=gateway),
+    )
     try:
         return main(["chat"])
     except KeyboardInterrupt:
-        # an escaped interrupt would abort the whole pytest session
+        # Um KeyboardInterrupt que escape de main() abortaria a sessão inteira do pytest.
         pytest.fail("KeyboardInterrupt escaped main()")
 
 
+def test_it_should_build_the_ollama_gateway_through_build_assistant_without_calling_it(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "ollama")
+    _set_input_lines(monkeypatch, [])
+    built_assistants: list[object] = []
+    created_gateways: list[OllamaGateway] = []
+    real_build_assistant = pet_helper.conversation.build_assistant
+    real_ollama_init = OllamaGateway.__init__
+
+    def spy_ollama_init(self, *args, **kwargs):
+        real_ollama_init(self, *args, **kwargs)
+        created_gateways.append(self)
+
+    def fail_on_complete(self, messages, tools=()):
+        pytest.fail("OllamaGateway.complete should not be called without a turn")
+
+    def spy_build_assistant(*args, **kwargs):
+        assistant = real_build_assistant(*args, **kwargs)
+        built_assistants.append(assistant)
+        return assistant
+
+    monkeypatch.setattr(OllamaGateway, "__init__", spy_ollama_init)
+    monkeypatch.setattr(OllamaGateway, "complete", fail_on_complete)
+    _patch_build_assistant(monkeypatch, spy_build_assistant)
+
+    code = main(["chat"])
+
+    assert code == 0
+    assert len(built_assistants) == 1
+    assert len(created_gateways) == 1
+
+
+def test_it_should_build_the_anthropic_gateway_in_chat_when_api_key_is_set(
+    monkeypatch,
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+    _set_input_lines(monkeypatch, [])
+    built_assistants: list[object] = []
+    created_gateways: list[AnthropicGateway] = []
+    real_build_assistant = pet_helper.conversation.build_assistant
+    real_anthropic_init = AnthropicGateway.__init__
+
+    def spy_anthropic_init(self, *args, **kwargs):
+        real_anthropic_init(self, *args, **kwargs)
+        created_gateways.append(self)
+
+    def spy_build_assistant(*args, **kwargs):
+        assistant = real_build_assistant(*args, **kwargs)
+        built_assistants.append(assistant)
+        return assistant
+
+    monkeypatch.setattr(AnthropicGateway, "__init__", spy_anthropic_init)
+    _patch_build_assistant(monkeypatch, spy_build_assistant)
+
+    code = main(["chat"])
+
+    assert code == 0
+    assert len(built_assistants) == 1
+    assert len(created_gateways) == 1
+
+
 def test_it_should_print_the_reply_for_each_line_with_text(monkeypatch, capsys):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
-    assert SCRIPTED_REPLY != DEFAULT_REPLY
+    gateway = FakeGateway(["Primeira resposta.", "Segunda resposta."])
 
-    _run_chat(monkeypatch, ["hello", "again"], gateway)
+    code = _run_chat(monkeypatch, ["Olá", "Qual o prazo de frete?"], gateway)
 
-    assert capsys.readouterr().out == f"{SCRIPTED_REPLY}\n{SCRIPTED_REPLY}\n\n"
+    assert code == 0
+    assert capsys.readouterr().out == "Primeira resposta.\nSegunda resposta.\n\n"
+
+
+def test_it_should_preserve_conversation_history_across_turns_in_chat(monkeypatch):
+    gateway = FakeGateway(["Preciso do seu CPF.", "Qual o número do outro pedido?"])
+
+    _run_chat(
+        monkeypatch,
+        ["Onde está o pedido PED-10001?", "e o outro pedido?"],
+        gateway,
+    )
+
+    dialogue = [
+        (message.type, message.text)
+        for message in gateway.calls[1]
+        if message.type != "system"
+    ]
+    assert dialogue == [
+        ("human", "Onde está o pedido PED-10001?"),
+        ("ai", "Preciso do seu CPF."),
+        ("human", "e o outro pedido?"),
+    ]
 
 
 def test_it_should_send_the_stripped_line_to_the_gateway(monkeypatch):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
+    gateway = FakeGateway([SCRIPTED_REPLY])
 
-    _run_chat(monkeypatch, ["  hello  "], gateway)
+    _run_chat(monkeypatch, ["  Olá, preciso de ajuda  "], gateway)
 
-    assert [(m.type, m.content) for m in gateway.calls[0]] == [("human", "hello")]
+    dialogue = [
+        (message.type, message.text)
+        for message in gateway.calls[0]
+        if message.type != "system"
+    ]
+    assert dialogue == [("human", "Olá, preciso de ajuda")]
 
 
 def test_it_should_skip_blank_lines_without_calling_the_gateway(monkeypatch, capsys):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
+    gateway = FakeGateway([])
 
     _run_chat(monkeypatch, ["", "   \t "], gateway)
 
@@ -61,8 +189,234 @@ def test_it_should_skip_blank_lines_without_calling_the_gateway(monkeypatch, cap
     assert capsys.readouterr().out == "\n"
 
 
+def test_it_should_exit_with_one_printing_one_line_when_the_kit_is_missing(
+    tmp_path, monkeypatch, capsys
+):
+    missing_kit = tmp_path / "missing-kit"
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "ollama")
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(missing_kit))
+    _set_input_lines(monkeypatch, [])
+
+    code = main(["chat"])
+
+    captured = capsys.readouterr()
+    combined = f"{captured.out}{captured.err}"
+    non_empty_lines = [line for line in combined.splitlines() if line.strip()]
+    assert code == 1
+    assert len(non_empty_lines) == 1
+    assert "Traceback" not in combined
+    assert str(missing_kit.resolve()) in non_empty_lines[0]
+
+
+def _escalation_call(reason):
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "escalate_to_human",
+                "args": {"reason": reason},
+                "id": "call_escalate_1",
+            }
+        ],
+    )
+
+
+def test_it_should_print_the_handoff_reply_when_a_turn_escalates(monkeypatch, capsys):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+
+    _run_chat(monkeypatch, ["Quero falar com um atendente"], gateway)
+
+    assert HANDOFF_REPLY in capsys.readouterr().out.splitlines()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["animal_health_question", "strong_negative_sentiment", "explicit_request"],
+)
+def test_it_should_print_a_marker_naming_the_reason_after_the_handoff_reply(
+    monkeypatch, capsys, reason
+):
+    gateway = FakeGateway([_escalation_call(reason)])
+
+    _run_chat(monkeypatch, ["Preciso de ajuda"], gateway)
+
+    lines = capsys.readouterr().out.splitlines()
+    marker_line = lines[lines.index(HANDOFF_REPLY) + 1]
+    assert "escalonado" in marker_line
+    assert reason in marker_line
+
+
+def test_it_should_end_the_session_with_zero_after_an_escalated_turn(monkeypatch):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+
+    code = _run_chat(
+        monkeypatch,
+        ["Quero falar com um atendente"],
+        gateway,
+        exhausted=KeyboardInterrupt,
+    )
+
+    assert code == 0
+
+
+def test_it_should_leave_stderr_empty_after_a_business_escalation(monkeypatch, capsys):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+
+    _run_chat(monkeypatch, ["Quero falar com um atendente"], gateway)
+
+    assert capsys.readouterr().err == ""
+
+
+def test_it_should_exit_with_one_when_the_model_is_unavailable(monkeypatch):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert code == 1
+
+
+def test_it_should_print_the_model_unavailable_cause_on_stderr(monkeypatch, capsys):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert "model_unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "setting", ["PET_HELPER_PROVIDER", "ANTHROPIC_API_KEY", "OLLAMA_BASE_URL"]
+)
+def test_it_should_hint_at_the_provider_setting_when_the_model_is_unavailable(
+    monkeypatch, capsys, setting
+):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert setting in capsys.readouterr().err
+
+
+def test_it_should_keep_the_escalation_marker_on_stdout_when_the_model_is_unavailable(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelUnavailable()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert "[escalonado: repeated_failure]" in capsys.readouterr().out.splitlines()
+
+
+def test_it_should_exit_with_zero_when_the_model_refuses(monkeypatch):
+    gateway = FakeGateway([ModelResult(message=AIMessage(""), refused=True)])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert code == 0
+
+
+def test_it_should_print_the_refusal_cause_on_stderr_without_the_provider_hint(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelResult(message=AIMessage(""), refused=True)])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    stderr = capsys.readouterr().err
+    assert "refusal" in stderr
+    assert "PET_HELPER_PROVIDER" not in stderr
+
+
+def test_it_should_not_read_another_line_after_an_escalated_turn(monkeypatch):
+    gateway = FakeGateway([_escalation_call("explicit_request")])
+    lines_read: list[str] = []
+
+    def recorded_lines():
+        for line in ["Quero falar com um atendente", "Olá de novo"]:
+            lines_read.append(line)
+            yield line
+
+    _run_chat(monkeypatch, recorded_lines(), gateway)
+
+    assert lines_read == ["Quero falar com um atendente"]
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_model_config_is_rejected(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelConfigError("Anthropic rejected the API key (401)")])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
+
+    captured = capsys.readouterr()
+    stderr_lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert code == 1
+    assert len(stderr_lines) == 1
+    assert "Anthropic rejected the API key (401)" in stderr_lines[0]
+    assert "Traceback" not in captured.err
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_provider_is_unsupported(
+    monkeypatch, capsys
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "bogus")
+    _set_input_lines(monkeypatch, [])
+
+    code = main(["chat"])
+
+    captured = capsys.readouterr()
+    non_empty_lines = [
+        line for line in f"{captured.out}{captured.err}".splitlines() if line.strip()
+    ]
+    assert code == 1
+    assert len(non_empty_lines) == 1
+    assert "PET_HELPER_PROVIDER" in non_empty_lines[0]
+    assert "Traceback" not in captured.err
+
+
+def test_it_should_exit_with_one_printing_one_line_when_anthropic_is_selected_without_a_key(
+    monkeypatch, capsys
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "anthropic")
+    _set_input_lines(monkeypatch, ["Olá"])
+
+    code = main(["chat"])
+
+    captured = capsys.readouterr()
+    stderr_lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert code == 1
+    assert len(stderr_lines) == 1
+    assert "ANTHROPIC_API_KEY" in stderr_lines[0]
+    assert "Traceback" not in captured.err
+
+
+def test_it_should_never_call_the_ollama_fallback_when_anthropic_is_selected_without_a_key(
+    monkeypatch,
+):
+    monkeypatch.setenv("PET_HELPER_PROVIDER", "anthropic")
+    _set_input_lines(monkeypatch, ["Olá"])
+
+    def fail_on_complete(self, messages, tools=()):
+        pytest.fail("OllamaGateway.complete should not be called without a key")
+
+    monkeypatch.setattr(OllamaGateway, "complete", fail_on_complete)
+
+    code = main(["chat"])
+
+    assert code == 1
+
+
+def test_it_should_write_the_model_config_error_to_stderr_not_stdout(
+    monkeypatch, capsys
+):
+    gateway = FakeGateway([ModelConfigError("Anthropic rejected the API key (401)")])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
+
+    assert "Anthropic rejected the API key (401)" not in capsys.readouterr().out
+
+
 def test_it_should_exit_with_zero_on_end_of_input(monkeypatch):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
+    gateway = FakeGateway([])
 
     code = _run_chat(monkeypatch, [], gateway)
 
@@ -70,7 +424,7 @@ def test_it_should_exit_with_zero_on_end_of_input(monkeypatch):
 
 
 def test_it_should_print_a_newline_on_end_of_input(monkeypatch, capsys):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
+    gateway = FakeGateway([])
 
     _run_chat(monkeypatch, [], gateway)
 
@@ -78,7 +432,7 @@ def test_it_should_print_a_newline_on_end_of_input(monkeypatch, capsys):
 
 
 def test_it_should_exit_with_130_on_keyboard_interrupt(monkeypatch):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
+    gateway = FakeGateway([])
 
     code = _run_chat(monkeypatch, [], gateway, exhausted=KeyboardInterrupt)
 
@@ -86,7 +440,7 @@ def test_it_should_exit_with_130_on_keyboard_interrupt(monkeypatch):
 
 
 def test_it_should_print_a_newline_on_keyboard_interrupt(monkeypatch, capsys):
-    gateway = FakeGateway(replies=[SCRIPTED_REPLY])
+    gateway = FakeGateway([])
 
     _run_chat(monkeypatch, [], gateway, exhausted=KeyboardInterrupt)
 
@@ -94,7 +448,9 @@ def test_it_should_print_a_newline_on_keyboard_interrupt(monkeypatch, capsys):
 
 
 def test_it_should_exit_with_130_on_keyboard_interrupt_during_a_turn(monkeypatch):
-    code = _run_chat(monkeypatch, ["hello"], _InterruptingGateway())
+    gateway = FakeGateway([KeyboardInterrupt()])
+
+    code = _run_chat(monkeypatch, ["Olá"], gateway)
 
     assert code == 130
 
@@ -102,7 +458,9 @@ def test_it_should_exit_with_130_on_keyboard_interrupt_during_a_turn(monkeypatch
 def test_it_should_print_a_newline_on_keyboard_interrupt_during_a_turn(
     monkeypatch, capsys
 ):
-    _run_chat(monkeypatch, ["hello"], _InterruptingGateway())
+    gateway = FakeGateway([KeyboardInterrupt()])
+
+    _run_chat(monkeypatch, ["Olá"], gateway)
 
     assert capsys.readouterr().out == "\n"
 
