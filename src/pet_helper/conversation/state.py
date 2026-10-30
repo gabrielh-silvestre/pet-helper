@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Iterable, Mapping, Sequence, Set
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -12,6 +12,17 @@ type EscalationReason = Literal[
     "repeated_failure",
     "explicit_request",
 ]
+
+_REASON_PRIORITY: tuple[EscalationReason, ...] = (
+    "animal_health_question",
+    "strong_negative_sentiment",
+    "repeated_failure",
+    "explicit_request",
+)
+
+
+def highest_priority_reason(reasons: Iterable[EscalationReason]) -> EscalationReason:
+    return min(reasons, key=_REASON_PRIORITY.index)
 
 
 def _keep_first[T](current: T | None, update: T | None) -> T | None:

@@ -17,6 +17,10 @@ from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard
 
 _HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
+_ALREADY_HANDED_OFF_REPLY = (
+    "Sua conversa já foi encaminhada para um atendente humano, que dará "
+    "continuidade ao atendimento."
+)
 
 
 class _PickleSerializer(JsonPlusSerializer):
@@ -73,8 +77,9 @@ def _route_after_output_guard(state: ConversationState) -> str:
 
 
 def _handoff_node(state: ConversationState) -> dict[str, Any]:
+    reply = _ALREADY_HANDED_OFF_REPLY if state.get("ended") else _HANDOFF_REPLY
     return {
-        "messages": [AIMessage(_HANDOFF_REPLY)],
+        "messages": [AIMessage(reply)],
         "ended": True,
     }
 
@@ -104,13 +109,11 @@ def build_graph(
             return {
                 "escalation": "repeated_failure",
                 "escalation_cause": "model_unavailable",
-                "ended": True,
             }
         if result.refused:
             return {
                 "escalation": "repeated_failure",
                 "escalation_cause": "refusal",
-                "ended": True,
             }
         return {"messages": [result.message]}
 

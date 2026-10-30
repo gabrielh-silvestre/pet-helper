@@ -3,12 +3,18 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from pet_helper.conversation.state import ConversationState, record_step_outcome
+from pet_helper.conversation.state import (
+    ConversationState,
+    EscalationReason,
+    highest_priority_reason,
+    record_step_outcome,
+)
 from pet_helper.knowledge import PolicyHit
 from pet_helper.orders import Found, NeedsIdentification, NotFound, Unavailable
 from pet_helper.orders.models import ORDER_NUMBER_PATTERN
 
 _ORDER_TOOL = "get_order"
+_ESCALATE_TOOL = "escalate_to_human"
 
 
 def _latest_tool_round(
@@ -53,9 +59,12 @@ def record_node(state: ConversationState) -> dict[str, Any]:
     failures = dict(state.get("failures") or {})
     counted = frozenset(state.get("steps_counted", ()))
     hits: list[PolicyHit] = []
+    reasons: list[EscalationReason] = []
     for result in results:
         if isinstance(result.artifact, list):
             hits.extend(item for item in result.artifact if isinstance(item, PolicyHit))
+        if result.name == _ESCALATE_TOOL and result.status != "error":
+            reasons.append(result.artifact)
         if result.name != _ORDER_TOOL:
             continue
         outcome = _order_step_outcome(
@@ -63,7 +72,16 @@ def record_node(state: ConversationState) -> dict[str, Any]:
         )
         if outcome is not None:
             failures, counted = record_step_outcome(failures, counted, *outcome)
+    escalation = (
+        {
+            "escalation": highest_priority_reason(reasons),
+            "escalation_cause": _ESCALATE_TOOL,
+        }
+        if reasons
+        else {}
+    )
     return {
+        **escalation,
         "tool_rounds": state.get("tool_rounds", 0) + 1,
         "retrieved": tuple(hits),
         "failures": failures,

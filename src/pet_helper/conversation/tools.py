@@ -1,5 +1,5 @@
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
@@ -7,6 +7,7 @@ from pydantic import Field
 
 from pet_helper.catalog import Catalog
 from pet_helper.catalog.models import Product
+from pet_helper.conversation.state import EscalationReason
 from pet_helper.knowledge import PolicyHit, PolicyIndex
 from pet_helper.orders import (
     Cpf,
@@ -108,6 +109,25 @@ def _make_search_catalog(catalog: Catalog) -> BaseTool:
     return search_catalog
 
 
+def _make_escalate_to_human() -> BaseTool:
+    @tool(response_format="content_and_artifact")
+    def escalate_to_human(
+        reason: Literal[
+            "animal_health_question", "strong_negative_sentiment", "explicit_request"
+        ],
+    ) -> tuple[str, EscalationReason]:
+        """Hand the conversation over to a human agent; the conversation ends.
+
+        Call it for a question about a pet's health (animal_health_question),
+        a customer who is strongly upset (strong_negative_sentiment) or one who
+        asks for a person (explicit_request). The backend writes the reply to
+        the customer, so do not write one.
+        """
+        return _to_json({"status": "escalated"}), reason
+
+    return escalate_to_human
+
+
 def build_tool_registry(
     *,
     policies: PolicyIndex,
@@ -118,4 +138,5 @@ def build_tool_registry(
     registry.register(_make_search_policies(policies))
     registry.register(_make_get_order(orders))
     registry.register(_make_search_catalog(catalog))
+    registry.register(_make_escalate_to_human())
     return registry

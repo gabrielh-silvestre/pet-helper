@@ -91,7 +91,7 @@ _Avoid_: out-of-scope question, unknown
 ### Escalation
 
 **Escalation** _(escalonamento)_:
-Handing the conversation over to a Human Agent, after which the assistant stops answering on that matter; it happens once per conversation and records one Escalation Reason.
+Handing the conversation over to a Human Agent, after which the conversation ends; it happens once per conversation and records one Escalation Reason.
 _Avoid_: handoff, transfer, transbordo
 
 **Escalation Reason** _(motivo do escalonamento)_:

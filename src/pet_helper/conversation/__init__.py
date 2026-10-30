@@ -8,6 +8,7 @@ from pet_helper.conversation.service import (
 from pet_helper.conversation.state import (
     ConversationState,
     EscalationReason,
+    highest_priority_reason,
     record_step_outcome,
 )
 from pet_helper.conversation.tools import ToolRegistry, build_tool_registry
@@ -22,5 +23,6 @@ __all__ = [
     "build_assistant",
     "build_graph",
     "build_tool_registry",
+    "highest_priority_reason",
     "record_step_outcome",
 ]
