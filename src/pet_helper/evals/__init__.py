@@ -27,6 +27,11 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS = {
     "AnthropicBatchClient": "judge",
     "AnthropicJudgeClient": "judge",
+    "BatchClient": "judge",
+    "Estimate": "round",
+    "GitState": "round",
+    "JudgeClient": "judge",
+    "RoundResult": "round",
     "collect_round": "round",
     "current_git_state": "round",
     "rejudge_round": "round",

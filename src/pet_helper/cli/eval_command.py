@@ -153,15 +153,17 @@ def _problem(case: EvalCase, kit_dir: Path, held_out: bool) -> str | None:
     return f"{case.id}: the reference fails {failed}"
 
 
-def _reference_round(root: Path, suite: str | None) -> str | None:
+def _reference_round(root: Path, case_id: str) -> str | None:
     if not root.is_dir():
         return None
     for directory in sorted(root.iterdir(), reverse=True):
-        path = directory / "cases.csv"
-        if not path.is_file():
+        info, path = directory / "round.json", directory / "cases.csv"
+        if not (info.is_file() and path.is_file()):
+            continue
+        if json.loads(info.read_text(encoding="utf-8")).get("runs") != DEFAULT_RUNS:
             continue
         with path.open(encoding="utf-8", newline="") as file:
-            if any(row["suite"] == (suite or "") for row in csv.DictReader(file)):
+            if any(row["case_id"] == case_id for row in csv.DictReader(file)):
                 return directory.name
     return None
 
@@ -193,7 +195,13 @@ def _new_round(
         else root
     )
     decisive = args.case is not None and args.runs > _DECISIVE_ABOVE_RUNS
-    reference = _reference_round(root, selection[0].suite) if decisive else None
+    reference = _reference_round(root, selection[0].id) if decisive else None
+    if decisive and reference is None:
+        print(
+            f"No round of {DEFAULT_RUNS} runs with {selection[0].id} to decide against",
+            file=sys.stderr,
+        )
+        return 1
     if reference and not held_out:
         print(f"Decisive rerun against round {reference}")
     result = run_round(
@@ -235,7 +243,13 @@ def _saved_round(
         # _dispatch already rejected the missing client
         batch = cast("BatchClient", env.batch_client)
         try:
-            result = collect_round(directory, cases, batch)
+            result = collect_round(
+                directory,
+                cases,
+                batch,
+                wait_seconds=env.batch_wait_seconds,
+                poll_seconds=env.batch_poll_seconds,
+            )
         except ValueError as exc:
             print(exc, file=sys.stderr)
             return 1

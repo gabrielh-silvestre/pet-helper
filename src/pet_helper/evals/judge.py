@@ -31,6 +31,7 @@ from pet_helper.evals.budget import (
     JUDGE_MODEL,
     RoundBudget,
     batch_reserve_usd,
+    judge_call_reserve_usd,
 )
 from pet_helper.evals.cases import EvalCase, JudgeEntry
 from pet_helper.evals.confirm import confirm
@@ -461,7 +462,7 @@ def _judge_charged(
 ) -> Verdict:
     verdict = _reserve_call_settle(
         budget,
-        JUDGE_CALL_RESERVE_USD,
+        judge_call_reserve_usd(client.model),
         lambda: _judge_entry(entry, judged.transcript, client),
     )
     append_verdict(log_path, judged.run_id, entry.criterion, verdict)
@@ -582,7 +583,7 @@ def _smoke(
         f"Worst-case estimate: US$ {estimate:.4f} (one sync call and one batch item), "
         f"cap US$ {cap_usd}"
     )
-    if not confirm("Make these paid calls? Type yes to go on: "):
+    if not confirm("Make these paid calls? Type yes or y to go on: "):
         print("Aborted, nothing was called")
         return 1
     budget = RoundBudget(cap_usd)

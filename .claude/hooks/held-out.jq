@@ -4,10 +4,17 @@
 # shortcut: shell commands are split on ; & | and read by token, not parsed; `cd evals` then a listing, or an
 # unlisted tool, still gets through (accepted residual risk, see the PR).
 # the exclusion spellings a search uses to skip the folder: they carry the path form themselves
+def exclusion_patterns:
+  ["--exclude(-dir)?[= ]\\S+",
+   "(-not|!)\\s+-i?(path|name|wholename)\\s+('[^']*'|\"[^\"]*\"|\\S+)",
+   "-path\\s+('[^']*'|\"[^\"]*\"|\\S+)\\s+-prune"];
 def strip_exclusions:
-  gsub("--exclude(-dir)?[= ]\\S+"; "")
-  | gsub("(-not|!)\\s+-i?(path|name|wholename)\\s+('[^']*'|\"[^\"]*\"|\\S+)"; "")
-  | gsub("-path\\s+('[^']*'|\"[^\"]*\"|\\S+)\\s+-prune"; "");
+  reduce exclusion_patterns[] as $pattern (.; gsub($pattern; ""));
+# an exclusion counts only when the removed fragment itself names the folder
+def excludes_folder:
+  . as $text
+  | exclusion_patterns
+  | any(. as $pattern | [$text | match($pattern; "g").string] | any(test("held_out")));
 # a path that holds the folder below it
 def ancestor:
   sub("/+$"; "")
@@ -15,7 +22,7 @@ def ancestor:
 # a shell segment that searches recursively over an ancestor without excluding the folder
 def recursive_over_ancestor:
   . as $segment
-  | ($segment | (strip_exclusions != $segment) and test("held_out")) as $excludes
+  | ($segment | excludes_folder) as $excludes
   | if $excludes then false else
     ($segment | sub("^\\s*(rtk\\s+(proxy\\s+)?)?"; "") | [scan("\\S+") | gsub("['\"]"; "")]) as $words
     | ($words[1:]) as $args

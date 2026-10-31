@@ -13,6 +13,7 @@ __all__ = [
     "BudgetExceeded",
     "RoundBudget",
     "batch_reserve_usd",
+    "judge_call_reserve_usd",
 ]
 
 JUDGE_MODEL = "claude-sonnet-5-5"
@@ -39,9 +40,13 @@ def _worst_case_usd(model: str, input_tokens: int, output_tokens: int) -> Decima
 ASSISTANT_CALL_RESERVE_USD = _worst_case_usd(
     DEFAULT_ANTHROPIC_MODEL, ASSISTANT_INPUT_LIMIT_TOKENS, DEFAULT_MAX_TOKENS
 )
-JUDGE_CALL_RESERVE_USD = _worst_case_usd(
-    JUDGE_MODEL, JUDGE_INPUT_LIMIT_TOKENS, JUDGE_MAX_TOKENS
-)
+
+
+def judge_call_reserve_usd(model: str) -> Decimal:
+    return _worst_case_usd(model, JUDGE_INPUT_LIMIT_TOKENS, JUDGE_MAX_TOKENS)
+
+
+JUDGE_CALL_RESERVE_USD = judge_call_reserve_usd(JUDGE_MODEL)
 
 
 def batch_reserve_usd(

@@ -5,6 +5,7 @@ from datetime import date
 import pytest
 import yaml
 
+from pet_helper import evals
 from pet_helper.evals import cases as eval_cases
 from pet_helper.evals.cases import load_cases, to_sample_kwargs
 
@@ -388,6 +389,19 @@ def test_it_should_not_import_inspect_ai_from_the_evals_package(monkeypatch):
     module = importlib.import_module("pet_helper.evals")
 
     assert module is not None
+
+
+@pytest.mark.parametrize("name", evals.__all__)
+def test_it_should_give_access_to_every_name_the_evals_package_exports(name):
+    assert hasattr(evals, name)
+
+
+def test_it_should_import_everything_the_evals_package_exports_with_a_star_import():
+    namespace: dict = {}
+
+    exec("from pet_helper.evals import *", namespace)  # noqa: S102
+
+    assert set(evals.__all__) <= set(namespace)
 
 
 def test_it_should_not_import_inspect_ai(monkeypatch):

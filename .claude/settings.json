@@ -34,6 +34,16 @@
         ]
       },
       {
+        "matcher": "Bash|mcp__plugin_context-mode_.*|mcp__plugin_oh-my-claudecode_t__python_repl",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "! jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/paid-command.jq\" >/dev/null || { echo 'Paid eval commands (pet-helper eval, judge smoke, labels judge-pool) are never run by an agent; the owner runs them in their own terminal.' >&2; exit 2; }",
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__hexlog__register",
         "hooks": [
           {

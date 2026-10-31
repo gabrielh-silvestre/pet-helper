@@ -39,6 +39,7 @@ from pet_helper.evals.fixtures import overlay_kit
 from pet_helper.evals.judge import (
     JudgeClient,
     Judged,
+    JudgeReplyError,
     Transcript,
     TranscriptTurn,
     Verdict,
@@ -53,6 +54,8 @@ from pet_helper.trace import BudgetExceeded, TraceCallbackHandler, Tracer
 GatewayFactory = Callable[[EvalCase, int], ModelGateway]
 
 MOCK_MODEL = "mockllm/model"
+# the reason of a run whose judge reply was billed but cannot be read: the run waits for a rejudge
+JUDGE_UNPARSABLE = "judge:unparsable"
 # building is pure-Python CPU work: serial it is faster than thrashing the GIL, and it guards the registry cache
 _BUILD_LOCK = threading.Lock()
 
@@ -350,6 +353,17 @@ def eval_task(
                 except BudgetExceeded:
                     stop.set()
                     return _not_run_score()
+                except JudgeReplyError:
+                    # the conversation is paid for: keep it, so `--rejudge` can read it again
+                    return Score.unscored(
+                        reason=JUDGE_UNPARSABLE,
+                        metadata={
+                            "outcome": outcome,
+                            "failed_checks": failed_checks,
+                            "reason": JUDGE_UNPARSABLE,
+                            "expected_doc_recall": recall,
+                        },
+                    )
                 outcome, failed_checks, reason = _with_judge_verdicts(
                     outcome, failed_checks, reason, verdicts
                 )

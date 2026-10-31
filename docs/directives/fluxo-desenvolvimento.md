@@ -85,6 +85,7 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 
 - Os testes não rodam no `pre-commit`, já que o commit fecha uma unidade de trabalho (a spec) e nunca um passo do TDD: o vermelho fica fora do histórico, e a saída dele vai para o hexlog e o PR.
 - Nada que chame o modelo real roda de forma automática: nem gancho do git, nem CI, nem agendamento.
+- Nenhum agente roda um comando pago (`pet-helper eval`, `judge smoke`, `labels judge-pool`): o gancho `paid-command.jq` barra a chamada em qualquer sessão, e quem roda é o dono, no próprio terminal.
 - O projeto não usa teste de mutação.
 - Gancho local pode ser pulado; o CI é a barreira que não depende da máquina de quem commita.
 

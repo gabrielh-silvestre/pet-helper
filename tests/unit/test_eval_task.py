@@ -24,8 +24,11 @@ from pet_helper.conversation import system_prompt_sha256
 from pet_helper.conversation.prompt import SYSTEM_PROMPT
 from pet_helper.evals.budget import (
     ASSISTANT_CALL_RESERVE_USD,
+    BATCH_PRICE_FACTOR,
     JUDGE_CALL_RESERVE_USD,
+    JUDGE_MAX_TOKENS,
     RoundBudget,
+    batch_reserve_usd,
 )
 from pet_helper.evals.cases import EvalCase, load_cases, to_sample_kwargs
 from pet_helper.evals.judge import DEFAULT_JUDGE_MODEL, current_verdicts
@@ -149,9 +152,16 @@ class JudgeStub:
 
     model = DEFAULT_JUDGE_MODEL
 
-    def __init__(self, verdict: str = "pass", error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        verdict: str = "pass",
+        error: Exception | None = None,
+        raw: str | None = None,
+    ) -> None:
         self.verdict = verdict
         self.error = error
+        # a reply sent as is, to stand for one that cannot be parsed
+        self.raw = raw
         self.calls: list[tuple[str, str]] = []
         self.threads: list[str] = []
 
@@ -160,6 +170,8 @@ class JudgeStub:
         self.threads.append(threading.current_thread().name)
         if self.error is not None:
             raise self.error
+        if self.raw is not None:
+            return self.raw, JUDGE_USAGE
         reply = {"critique": "Looks fine.", "verdict": self.verdict}
         return json.dumps(reply), JUDGE_USAGE
 
@@ -864,6 +876,59 @@ def test_it_should_make_the_epoch_an_error_when_the_judge_client_raises(round_di
     [sample] = epochs_of(log, "judged")
     assert outcome_of(sample) == "error"
     assert not any(s.value == CORRECT for s in (sample.scores or {}).values())
+
+
+def test_it_should_reserve_the_worst_case_of_the_configured_judge_model(round_dir):
+    case = make_case("judged", judge=["tone"])
+    judge = JudgeStub()
+    judge.model = "claude-opus-5-5"
+    budget = RecordingBudget()
+    worst_case = batch_reserve_usd(1, JUDGE_MAX_TOKENS, model=judge.model)
+
+    run_round(round_dir, [case], Gateways(), runs=1, judge=judge, budget=budget)
+
+    assert min(budget.reserves) >= worst_case / BATCH_PRICE_FACTOR
+
+
+def test_it_should_not_error_the_epoch_when_the_judge_reply_cannot_be_parsed(
+    round_dir,
+):
+    case = make_case("judged", judge=["tone"])
+
+    log = run_round(
+        round_dir, [case], Gateways(), runs=1, judge=JudgeStub(raw="not json")
+    )
+
+    [sample] = epochs_of(log, "judged")
+    assert sample.error is None
+
+
+def test_it_should_leave_the_epoch_unscored_when_the_judge_reply_cannot_be_parsed(
+    round_dir,
+):
+    case = make_case("judged", judge=["tone"])
+
+    log = run_round(
+        round_dir, [case], Gateways(), runs=1, judge=JudgeStub(raw="not json")
+    )
+
+    score = score_of(epochs_of(log, "judged")[0])
+    assert score.metadata["reason"] == "judge:unparsable"
+    assert score.value not in (CORRECT, INCORRECT)
+
+
+def test_it_should_keep_the_conversation_when_the_judge_reply_cannot_be_parsed(
+    round_dir,
+):
+    case = make_case("judged", judge=["tone"])
+    gateways = Gateways({"judged": ["Resposta boa."]})
+
+    log = run_round(
+        round_dir, [case], gateways, runs=1, judge=JudgeStub(raw="not json")
+    )
+
+    [reply] = record_of(epochs_of(log, "judged")[0])["replies"]
+    assert reply["text"] == "Resposta boa."
 
 
 # off-script

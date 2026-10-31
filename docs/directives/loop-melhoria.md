@@ -45,7 +45,7 @@ Como uma rodada de eval vira uma mudança aceita no assistente. Cada volta do lo
 - Nada que chame o modelo real roda de forma automática: nem gancho do git, nem CI, nem agendamento.
 - Toda rodada é disparada à mão.
 - Antes de rodar, o comando mostra a estimativa de tokens e custo e pede confirmação.
-- Cada comando pago (rodada de eval, repetição de caso decisivo, re-julgamento, validação do juiz, fumaça) mostra a própria estimativa e para antes de passar de US$ 5, salvando o que já tiver; preço desconhecido impede o comando de começar.
+- Cada comando pago (rodada de eval, repetição de caso decisivo, re-julgamento, validação do juiz, fumaça) mostra a própria estimativa e para antes de passar de US$ 5, salvando o que já tiver; com um modelo sem preço conhecido o comando começa e para na primeira chamada, salvando o que já tiver.
 - Tokens e custo reais de cada caso ficam no arquivo de resultados.
 
 ## Correção

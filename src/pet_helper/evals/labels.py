@@ -6,7 +6,7 @@ import random
 import sys
 import time
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from functools import partial
@@ -55,7 +55,12 @@ _GROUP_CAP = 25
 _DEV_SHARE = 0.4
 _BATCH_TIMEOUT_SECONDS = 3600.0
 _BATCH_POLL_SECONDS = 10.0
-_STOPS = (BudgetExceeded, UnknownPriceError, anthropic.APIStatusError)
+_STOPS = (
+    BudgetExceeded,
+    UnknownPriceError,
+    anthropic.APIStatusError,
+    anthropic.APIConnectionError,
+)
 
 _TONE_SEEDS = (
     ("dismissive", "Isso não é comigo, procure outro canal."),
@@ -135,6 +140,15 @@ def _read_pool(labels: Path) -> list[dict[str, Any]]:
 
 def _read_key(labels: Path) -> dict[str, dict[str, Any]]:
     return json.loads((labels / "key.json").read_text(encoding="utf-8"))
+
+
+def _write_key(labels: Path, key: dict[str, dict[str, Any]]) -> None:
+    # replaced whole, so an interrupted write never leaves a half-written key
+    temp = labels / "key.json.tmp"
+    temp.write_text(
+        json.dumps(key, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    os.replace(temp, labels / "key.json")
 
 
 def _floor(labels: Path, *, required: bool) -> dict[str, dict[str, float]]:
@@ -304,7 +318,7 @@ def _pool(directory: Path) -> None:
     ]
     for item in items:
         item["id"] = _item_id(item)
-    kept = _capped(items)
+    kept = _capped(list({item["id"]: item for item in items}.values()))
     splits = _splits(kept)
     fields = ("criterion", "seeded", "group", "case_id", "seed_kind")
     key = {
@@ -316,9 +330,7 @@ def _pool(directory: Path) -> None:
     }
     pool = [{k: item[k] for k in ("id", "criterion", "slice")} for item in kept]
     (labels / "pool.jsonl").write_text(_dump_jsonl(pool), encoding="utf-8")
-    (labels / "key.json").write_text(
-        json.dumps(key, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    _write_key(labels, key)
     counts = Counter(item["criterion"] for item in kept)
     print(f"Pooled {len(kept)} items into {labels / 'pool.jsonl'}")
     print("\n".join(f"{name}: {counts[name]} items" for name in CRITERIA))
@@ -327,19 +339,31 @@ def _pool(directory: Path) -> None:
 # judge-pool
 
 
-def _require_fresh_test(labels: Path, force: bool) -> None:
+def _test_items_to_judge(
+    labels: Path,
+    key: dict[str, dict[str, Any]],
+    items: Sequence[dict[str, Any]],
+    force: bool,
+) -> list[dict[str, Any]]:
+    current = judge_prompt_sha256()
     runs = [r for r in _read_jsonl(labels / "judge-runs.jsonl") if r["split"] == "test"]
-    if any(r["judge_prompt_sha256"] == judge_prompt_sha256() for r in runs):
-        raise _Refused("the test split was already read with this judge prompt")
-    if runs and not force:
+    pending = [i for i in items if key[i["id"]].get("judge_prompt_sha256") != current]
+    if any(r["judge_prompt_sha256"] == current for r in runs):
+        if not pending:
+            raise _Refused("the test split was already read with this judge prompt")
+    elif runs and not force:
         raise _Refused(
             "the test split was read with another judge prompt, "
             "--force-new-validation records a new validation"
         )
+    return pending
 
 
 def _judge_sync(
-    items: Sequence[dict[str, Any]], client: JudgeClient, budget: RoundBudget
+    items: Sequence[dict[str, Any]],
+    client: JudgeClient,
+    budget: RoundBudget,
+    store: Callable[[str, str], None],
 ) -> tuple[dict[str, str], Decimal, str | None]:
     verdicts: dict[str, str] = {}
     cost = Decimal(0)
@@ -352,6 +376,7 @@ def _judge_sync(
             continue
         except _STOPS as error:
             return verdicts, cost, str(error)
+        store(item["id"], verdict.verdict)
         verdicts[item["id"]] = verdict.verdict
         cost += verdict.cost_usd
     return verdicts, cost, None
@@ -361,6 +386,7 @@ def _judge_batch(
     items: Sequence[dict[str, Any]],
     client: BatchClient,
     budget: RoundBudget,
+    store: Callable[[str, str], None],
     poll_seconds: float,
     timeout_seconds: float,
 ) -> tuple[dict[str, str], Decimal, str | None]:
@@ -389,15 +415,20 @@ def _judge_batch(
         return {}, Decimal(0), str(error)
     verdicts: dict[str, str] = {}
     cost = Decimal(0)
+    stop = None
     for item_id, (text, usage) in collection.completions.items():
         try:
             verdict = verdict_from_reply(text, usage, client.model)
         except JudgeReplyError:
             continue
+        except _STOPS as error:
+            stop = str(error)
+            break
+        store(item_id, verdict.verdict)
         verdicts[item_id] = verdict.verdict
         cost += verdict.cost_usd * BATCH_PRICE_FACTOR
     budget.on_cost(cost)
-    return verdicts, cost, None
+    return verdicts, cost, stop
 
 
 def _judge_pool(
@@ -419,7 +450,7 @@ def _judge_pool(
         raise _Refused(f"the pool has no item in the {split} split")
     if split == "test":
         _floor(labels, required=True)
-        _require_fresh_test(labels, force)
+        items = _test_items_to_judge(labels, key, items, force)
     if (client if mode == "sync" else batch_client) is None and not os.environ.get(
         API_KEY_ENV
     ):
@@ -439,26 +470,26 @@ def _judge_pool(
         print("Aborted, nothing was called")
         return 1
 
+    def store(item_id: str, verdict: str) -> None:
+        key[item_id]["verdict"] = verdict
+        key[item_id]["judge_prompt_sha256"] = judge_prompt_sha256()
+        _write_key(labels, key)
+
     budget = RoundBudget(cap_usd)
     if mode == "sync":
         verdicts, cost, stop = _judge_sync(
-            items, client or AnthropicJudgeClient(), budget
+            items, client or AnthropicJudgeClient(), budget, store
         )
     else:
         verdicts, cost, stop = _judge_batch(
             items,
             batch_client or AnthropicBatchClient(),
             budget,
+            store,
             poll_seconds,
             timeout_seconds,
         )
     if verdicts:
-        for item_id, verdict in verdicts.items():
-            key[item_id]["verdict"] = verdict
-        (labels / "key.json").write_text(
-            json.dumps(key, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
         _append_jsonl(
             labels / "judge-runs.jsonl",
             [
@@ -467,6 +498,7 @@ def _judge_pool(
                     "judge_prompt_sha256": judge_prompt_sha256(),
                     "forced": force,
                     "items": len(verdicts),
+                    "complete": len(verdicts) == count,
                     "cost_usd": str(cost),
                 }
             ],
@@ -565,6 +597,8 @@ def _tpr_tnr(directory: Path, split: str) -> None:
     in_split = {i: entry for i, entry in key.items() if entry["split"] == split}
     if not any("verdict" in entry for entry in in_split.values()):
         raise _Refused(f"no judge run covered the {split} split, run judge-pool first")
+    if split == "test" and any("verdict" not in entry for entry in in_split.values()):
+        raise _Refused("some test items still wait for a verdict, finish judge-pool")
     # few-shot items are in the prompt, so they would inflate the dev metrics
     shots = (
         {(e.criterion, e.slice) for e in judge_module.FEW_SHOT_EXAMPLES}

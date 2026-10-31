@@ -48,17 +48,21 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import anthropic
+import httpx
 import pytest
-from pet_helper.evals.labels import main
 
 from pet_helper.evals import judge as judge_module
+from pet_helper.evals import labels as labels_module
 from pet_helper.evals.judge import (
     CRITERIA,
     FewShotExample,
     build_prompt,
     judge_prompt_sha256,
 )
+from pet_helper.evals.labels import main
 from pet_helper.orders.api import FAILURE_ENV
+from pet_helper.trace import UnknownPriceError
 from tests.unit.test_eval_judge import FakeBatchClient, FakeClient
 from tests.unit.test_eval_round import play
 from tests.unit.test_eval_task import (
@@ -512,6 +516,50 @@ def test_it_should_pool_owner_written_failures_as_a_third_group(
     )
 
 
+@pytest.fixture
+def doubled_seeds(tmp_path, seeded_base) -> Path:
+    directory = tmp_path / "results" / "round-1"
+    shutil.copytree(seeded_base, directory)
+    seeds = labels_of(directory) / "seeds.jsonl"
+    seeds.write_text(seeds.read_text(encoding="utf-8") * 2, encoding="utf-8")
+    return directory
+
+
+def test_it_should_list_a_seed_repeated_in_seeds_jsonl_once_in_the_pool(
+    doubled_seeds, cli
+):
+    cli("pool", doubled_seeds)
+
+    ids = [item["id"] for item in read_pool(doubled_seeds)]
+    assert len(set(ids)) == len(ids)
+
+
+def test_it_should_count_only_unique_ids_in_the_pooled_total(doubled_seeds, cli):
+    _, out, _ = cli("pool", doubled_seeds)
+
+    unique = {item["id"] for item in read_pool(doubled_seeds)}
+    assert f"Pooled {len(unique)} items" in out
+
+
+def test_it_should_cap_each_group_by_unique_ids(doubled_seeds, pooled_base, cli):
+    cli("pool", doubled_seeds)
+
+    for name in ("pool.jsonl", "key.json"):
+        assert (labels_of(doubled_seeds) / name).read_bytes() == (
+            labels_of(pooled_base) / name
+        ).read_bytes()
+
+
+def test_it_should_judge_a_seed_repeated_in_seeds_jsonl_once(doubled_seeds, cli):
+    cli("pool", doubled_seeds)
+    client = FakeClient()
+    dev_ids = {item["id"] for item in items_of(doubled_seeds, "dev")}
+
+    judge_pool(cli, doubled_seeds, "dev", client=client)
+
+    assert len(client.calls) == len(dev_ids)
+
+
 # judge-pool
 
 
@@ -734,6 +782,272 @@ def test_it_should_refuse_to_judge_a_round_without_a_pool(round_dir, cli):
 
     assert code != 0
     assert client.calls == []
+
+
+API_ERRORS = ["connection", "timeout", "rate-limit"]
+
+
+def api_error(kind: str) -> Exception:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    if kind == "connection":
+        return anthropic.APIConnectionError(request=request)
+    if kind == "timeout":
+        return anthropic.APITimeoutError(request=request)
+    response = httpx.Response(429, request=request)
+    return anthropic.RateLimitError("HTTP 429", response=response, body=None)
+
+
+class DroppingClient(FakeClient):
+    """Answers `after` calls, then fails every call with the error."""
+
+    def __init__(self, error: Exception, *, after: int) -> None:
+        super().__init__()
+        self.failure = error
+        self.after = after
+
+    def complete(self, system: str, user: str) -> tuple[str, dict]:
+        self.error = self.failure if len(self.calls) >= self.after else None
+        return super().complete(system, user)
+
+
+class WatchingClient(FakeClient):
+    """Records how many verdicts key.json held when each call began."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__()
+        self.directory = directory
+        self.stored: list[int] = []
+
+    def complete(self, system: str, user: str) -> tuple[str, dict]:
+        self.stored.append(len(verdicts_of(self.directory)))
+        return super().complete(system, user)
+
+
+class PartialBatchClient(FakeBatchClient):
+    """Batch that ends with a completion for only the first `answered` items."""
+
+    def __init__(self, answered: int) -> None:
+        super().__init__()
+        self.answered = answered
+
+    def collect(self, batch_id: str, item_ids: Sequence[str]) -> Any:
+        return super().collect(batch_id, list(item_ids)[: self.answered])
+
+
+def verdicts_of(directory: Path) -> dict[str, dict[str, Any]]:
+    return {i: e for i, e in read_key(directory).items() if "verdict" in e}
+
+
+def judge_batch(cli, directory: Path, split: str, batch: Any):
+    return cli(
+        "judge-pool",
+        directory,
+        "--split",
+        split,
+        "--judge",
+        "batch",
+        batch_client=batch,
+        poll_seconds=0,
+        timeout_seconds=5,
+    )
+
+
+def partial_test_run(cli, directory: Path, kind: str = "rate-limit", after: int = 5):
+    write_floor(directory)
+    client = DroppingClient(api_error(kind), after=after)
+    return judge_pool(cli, directory, "test", client=client)
+
+
+def change_judge_prompt(monkeypatch) -> None:
+    changed = [FewShotExample("tone", "an unrelated slice", "Note.", "pass")]
+    monkeypatch.setattr(judge_module, "FEW_SHOT_EXAMPLES", changed)
+
+
+@pytest.mark.parametrize("kind", API_ERRORS)
+def test_it_should_end_with_one_line_and_exit_one_when_the_api_fails_mid_run(
+    pooled, cli, kind
+):
+    client = DroppingClient(api_error(kind), after=3)
+
+    code, _, err = judge_pool(cli, pooled, "dev", client=client)
+
+    assert code == 1
+    assert one_line(err)
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize("kind", API_ERRORS)
+def test_it_should_keep_the_verdicts_already_paid_when_the_api_fails_mid_run(
+    pooled, cli, kind
+):
+    client = DroppingClient(api_error(kind), after=3)
+
+    judge_pool(cli, pooled, "dev", client=client)
+
+    assert len(verdicts_of(pooled)) == 3
+
+
+def test_it_should_write_each_verdict_to_the_key_before_the_next_call(pooled, cli):
+    client = WatchingClient(pooled)
+
+    judge_pool(cli, pooled, "dev", client=client)
+
+    assert client.stored == list(range(len(client.calls)))
+
+
+def test_it_should_stamp_each_stored_verdict_with_the_prompt_hash(pooled, cli):
+    judge_pool(cli, pooled, "dev")
+
+    stamps = {e["judge_prompt_sha256"] for e in verdicts_of(pooled).values()}
+    assert stamps == {judge_prompt_sha256()}
+
+
+def test_it_should_leave_key_json_untouched_when_replacing_it_is_interrupted(
+    pooled, cli, monkeypatch
+):
+    key = labels_of(pooled) / "key.json"
+    before = key.read_bytes()
+
+    def interrupted(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", interrupted)
+
+    judge_pool(cli, pooled, "dev")
+
+    assert key.read_bytes() == before
+
+
+def test_it_should_resume_a_partial_test_run_without_the_force_flag(pooled, cli):
+    partial_test_run(cli, pooled)
+    done = verdicts_of(pooled)
+    pending = [i for i in items_of(pooled, "test") if i["id"] not in done]
+    client = FakeClient()
+
+    code, _, _ = judge_pool(cli, pooled, "test", client=client)
+
+    assert code == 0
+    assert sorted(client.calls) == sorted(
+        build_prompt(item["criterion"], item["slice"]) for item in pending
+    )
+
+
+def test_it_should_cover_every_test_item_once_a_partial_run_is_resumed(pooled, cli):
+    partial_test_run(cli, pooled)
+
+    judge_pool(cli, pooled, "test")
+
+    test_ids = {item["id"] for item in items_of(pooled, "test")}
+    assert set(verdicts_of(pooled)) >= test_ids
+
+
+def test_it_should_refuse_a_test_run_once_a_resumed_run_has_covered_every_item(
+    pooled, cli
+):
+    partial_test_run(cli, pooled)
+    resumed, _, _ = judge_pool(cli, pooled, "test")
+    client = FakeClient()
+
+    code, _, _ = judge_pool(cli, pooled, "test", client=client)
+
+    assert resumed == 0
+    assert code != 0
+    assert client.calls == []
+
+
+def test_it_should_refuse_to_resume_a_partial_test_run_with_a_changed_hash(
+    pooled, cli, monkeypatch
+):
+    partial_test_run(cli, pooled)
+    change_judge_prompt(monkeypatch)
+    client = FakeClient()
+
+    code, _, _ = judge_pool(cli, pooled, "test", client=client)
+
+    assert code != 0
+    assert client.calls == []
+
+
+def test_it_should_judge_every_test_item_again_after_a_forced_new_validation(
+    pooled, cli, monkeypatch
+):
+    partial_test_run(cli, pooled)
+    change_judge_prompt(monkeypatch)
+    client = FakeClient()
+
+    code, _, _ = judge_pool(
+        cli, pooled, "test", "--force-new-validation", client=client
+    )
+
+    assert code == 0
+    assert len(client.calls) == len(items_of(pooled, "test"))
+
+
+@pytest.mark.parametrize("kind", API_ERRORS)
+def test_it_should_record_a_partial_test_run_as_incomplete(pooled, cli, kind):
+    partial_test_run(cli, pooled, kind)
+
+    [run] = read_jsonl(labels_of(pooled) / "judge-runs.jsonl")
+    assert (run["complete"], run["items"]) == (False, 5)
+
+
+def test_it_should_record_a_full_test_run_as_complete(pooled, cli):
+    write_floor(pooled)
+
+    judge_pool(cli, pooled, "test")
+
+    [run] = read_jsonl(labels_of(pooled) / "judge-runs.jsonl")
+    assert run["complete"] is True
+
+
+def test_it_should_resume_a_partial_batch_with_only_the_missing_items(pooled, cli):
+    write_floor(pooled)
+    judge_batch(cli, pooled, "test", PartialBatchClient(answered=5))
+    test_ids = {item["id"] for item in items_of(pooled, "test")}
+    missing = test_ids - set(verdicts_of(pooled))
+    batch = FakeBatchClient()
+
+    code, _, _ = judge_batch(cli, pooled, "test", batch)
+
+    assert code == 0
+    [submitted] = batch.submitted
+    assert {item.item_id for item in submitted} == missing
+
+
+def unpriced_after(monkeypatch, settled: int) -> None:
+    """Makes the batch settle `settled` replies, then meet a model without a price."""
+    real = labels_module.verdict_from_reply
+    seen = []
+
+    def settle(text: str, usage: Mapping[str, Any], model: str) -> Any:
+        if len(seen) >= settled:
+            raise UnknownPriceError(f"No price for anthropic/{model}")
+        seen.append(text)
+        return real(text, usage, model)
+
+    monkeypatch.setattr(labels_module, "verdict_from_reply", settle)
+
+
+def test_it_should_end_a_paid_batch_with_one_line_when_a_price_is_unknown(
+    pooled, cli, monkeypatch
+):
+    unpriced_after(monkeypatch, 3)
+
+    code, _, err = judge_batch(cli, pooled, "dev", FakeBatchClient())
+
+    assert code == 1
+    assert one_line(err)
+    assert "Traceback" not in err
+
+
+def test_it_should_keep_the_batch_verdicts_settled_before_an_unknown_price(
+    pooled, cli, monkeypatch
+):
+    unpriced_after(monkeypatch, 3)
+
+    judge_batch(cli, pooled, "dev", FakeBatchClient())
+
+    assert len(verdicts_of(pooled)) == 3
 
 
 # present and record
@@ -1191,6 +1505,18 @@ def test_it_should_refuse_the_test_split_without_a_written_floor_when_reporting(
 
 def test_it_should_refuse_a_split_no_judge_run_has_covered(tmp_path, cli):
     labels = Labels().add("tone", "pass", None, count=3)
+
+    code, out, err = tpr_tnr(cli, labels.write(tmp_path))
+
+    assert code != 0
+    assert out == ""
+    assert one_line(err)
+
+
+def test_it_should_refuse_the_test_split_while_some_of_its_items_wait_for_a_verdict(
+    tmp_path, cli
+):
+    labels = Labels().add("tone", "pass", "pass").add("tone", "pass", None)
 
     code, out, err = tpr_tnr(cli, labels.write(tmp_path))
 

@@ -1,4 +1,4 @@
-from pet_helper.orders.api import MockOrderApi
+from pet_helper.orders.api import FAILURE_ENV, MockOrderApi
 from pet_helper.orders.cpf import is_valid_cpf, normalize_cpf
 from pet_helper.orders.models import ORDER_NUMBER_PATTERN
 from pet_helper.orders.service import (
@@ -15,6 +15,7 @@ from pet_helper.orders.service import (
 )
 
 __all__ = [
+    "FAILURE_ENV",
     "ORDER_NUMBER_PATTERN",
     "Clock",
     "Cpf",

@@ -20,7 +20,7 @@ from pet_helper.evals.round import GitState
 from pet_helper.orders.api import FAILURE_ENV
 from pet_helper.trace.tracer import CONTENT_ENV
 from tests.unit.test_cli import _set_input_lines
-from tests.unit.test_eval_round import TURNS, BatchStub, Clock, Plan
+from tests.unit.test_eval_round import TURNS, BatchStub, Clock, Plan, api_error
 from tests.unit.test_eval_task import KIT, JudgeStub
 
 CPF = "000.000.001-91"
@@ -105,11 +105,24 @@ def write_rows(directory: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def save_round(root: Path, round_id: str, suite: str) -> None:
+def save_round(
+    root: Path,
+    round_id: str,
+    suite: str,
+    *,
+    case_id: str = "steady",
+    runs: int = 3,
+) -> None:
     directory = root / round_id
     directory.mkdir(parents=True)
-    write_rows(directory, [{"case_id": "steady", "suite": suite, "cost_usd": ""}])
-    (directory / "round.json").write_text(json.dumps({"round_id": round_id}))
+    write_rows(directory, [{"case_id": case_id, "suite": suite, "cost_usd": ""}])
+    (directory / "round.json").write_text(
+        json.dumps({"round_id": round_id, "runs": runs})
+    )
+
+
+def reference_of_newest_round(root: Path) -> str:
+    return read_info(saved_rounds(root)[-1])["reference_round"]
 
 
 def plant(directory: Path, where: str) -> str:
@@ -430,25 +443,89 @@ def test_it_should_not_label_a_smoke_run_as_a_round(monkeypatch, env, capsys):
 
 
 def test_it_should_write_a_round_of_ten_runs_for_a_decisive_rerun(monkeypatch, env):
+    save_round(env.results_root, "2026-10-31T090000", "capability")
+
     eval_cli(monkeypatch, env, "--case", "steady", "--runs", "10")
 
-    directory = only_round(env.results_root)
+    directory = saved_rounds(env.results_root)[-1]
     assert read_info(directory)["runs"] == 10
     assert "k_of_10" in read_rows(directory)[0]
 
 
-def test_it_should_decide_against_the_latest_saved_round_of_the_same_suite(
+def test_it_should_decide_against_the_latest_saved_round_of_three_runs_with_the_case(
     monkeypatch, env, capsys
 ):
     save_round(env.results_root, "2026-10-30T090000", "capability")
     save_round(env.results_root, "2026-10-31T090000", "capability")
-    save_round(env.results_root, "2026-11-01T090000", "regression")
 
     eval_cli(monkeypatch, env, "--case", "steady", "--runs", "10")
 
-    created = [d for d in saved_rounds(env.results_root) if d.name > "2026-11-01"]
-    assert read_info(created[-1])["reference_round"] == "2026-10-31T090000"
+    assert reference_of_newest_round(env.results_root) == "2026-10-31T090000"
     assert "2026-10-31T090000" in capsys.readouterr().out
+
+
+def test_it_should_not_take_a_newer_round_of_ten_runs_as_the_reference(
+    monkeypatch, env
+):
+    save_round(env.results_root, "2026-10-31T090000", "capability")
+    save_round(env.results_root, "2026-11-01T090000", "capability", runs=10)
+
+    eval_cli(monkeypatch, env, "--case", "steady", "--runs", "10")
+
+    assert reference_of_newest_round(env.results_root) == "2026-10-31T090000"
+
+
+def test_it_should_not_take_a_newer_round_without_the_case_as_the_reference(
+    monkeypatch, env
+):
+    save_round(env.results_root, "2026-10-31T090000", "capability")
+    save_round(env.results_root, "2026-11-01T090000", "capability", case_id="other")
+
+    eval_cli(monkeypatch, env, "--case", "steady", "--runs", "10")
+
+    assert reference_of_newest_round(env.results_root) == "2026-10-31T090000"
+
+
+def test_it_should_refuse_a_decisive_rerun_with_one_line_when_no_round_can_be_the_reference(
+    monkeypatch, env, capsys
+):
+    save_round(env.results_root, "2026-10-31T090000", "capability", runs=10)
+
+    code = eval_cli(monkeypatch, env, "--case", "steady", "--runs", "10")
+
+    lines = output_lines(capsys)
+    assert (code, len(lines)) == (1, 1)
+    assert "steady" in lines[0]
+
+
+def test_it_should_call_no_model_and_print_no_estimate_for_a_decisive_rerun_without_reference(
+    monkeypatch, env, plan, judge, capsys
+):
+    eval_cli(monkeypatch, env, "--case", "steady", "--runs", "10")
+
+    assert (plan.built, judge.calls, saved_rounds(env.results_root)) == ([], [], [])
+    assert "US$" not in "\n".join(output_lines(capsys))
+
+
+def test_it_should_name_only_the_case_when_a_held_out_decisive_rerun_has_no_reference(
+    monkeypatch, held_out, env, plan, capsys
+):
+    write_case(
+        env.held_out_cases_dir,
+        "reserved-hidden",
+        suite="held-out",
+        turns=[HIDDEN_TEXT],
+    )
+
+    code = eval_cli(
+        monkeypatch, env, "--held-out", "--case", "reserved-hidden", "--runs", "10"
+    )
+
+    lines = output_lines(capsys)
+    assert (code, len(lines), plan.built) == (1, 1, [])
+    assert "reserved-hidden" in lines[0]
+    assert HIDDEN_TEXT not in lines[0]
+    assert "held-out" not in lines[0]
 
 
 def test_it_should_retry_an_unable_run_until_ten_are_valid(monkeypatch, env):
@@ -806,6 +883,74 @@ def test_it_should_keep_the_batch_pending_when_the_judge_model_has_no_price(
 
     info = read_info(pending_batch)
     assert (info["batch_id"], info["judge_pending"]) == ("batch-1", True)
+
+
+def test_it_should_wait_for_the_batch_on_collect_up_to_the_configured_limit(
+    monkeypatch, env, pending_batch
+):
+    waiting = replace(
+        env,
+        batch_client=WatchedBatch(ready_after=3),
+        batch_wait_seconds=5.0,
+        batch_poll_seconds=0.0,
+    )
+
+    eval_cli(monkeypatch, waiting, "--collect", pending_batch.name, answers=[])
+
+    assert read_info(pending_batch)["judge_pending"] is False
+
+
+def test_it_should_poll_the_batch_on_collect_and_stay_pending_when_the_limit_passes(
+    monkeypatch, env, pending_batch
+):
+    watched = WatchedBatch(ready_after=10**9)
+    waiting = replace(
+        env, batch_client=watched, batch_wait_seconds=0.3, batch_poll_seconds=0.02
+    )
+
+    eval_cli(monkeypatch, waiting, "--collect", pending_batch.name, answers=[])
+
+    assert len(watched.collected) >= 2
+    assert read_info(pending_batch)["batch_id"] == "batch-1"
+
+
+def test_it_should_exit_non_zero_with_one_line_when_the_batch_submit_fails(
+    monkeypatch, env, capsys
+):
+    write_case(env.cases_dir, "judged", judge=["tone"])
+    failing = replace(env, batch_client=BatchStub(submit_error=api_error("connection")))
+    capsys.readouterr()
+
+    code = eval_cli(monkeypatch, failing, "--case", "judged", "--judge", "batch")
+
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert code not in (0, None)
+    assert len(errors) == 1
+
+
+def test_it_should_keep_the_error_body_out_of_a_held_out_batch_failure(
+    monkeypatch, held_out, env, capsys
+):
+    write_case(
+        env.held_out_cases_dir, "reserved-judged", suite="held-out", judge=["tone"]
+    )
+    failing = replace(
+        env,
+        batch_client=BatchStub(submit_error=api_error("bad_request", HIDDEN_TEXT)),
+    )
+    capsys.readouterr()
+
+    code = eval_cli(
+        monkeypatch,
+        failing,
+        *["--held-out", "--case", "reserved-judged", "--judge", "batch"],
+    )
+
+    output = capsys.readouterr()
+    errors = [line for line in output.err.splitlines() if line.strip()]
+    assert code not in (0, None)
+    assert len(errors) == 1
+    assert HIDDEN_TEXT not in output.out + output.err
 
 
 @pytest.mark.parametrize("argv", [["--judge", "batch"], ["--collect", "any-round"]])

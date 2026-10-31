@@ -5,6 +5,7 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -20,6 +21,10 @@ from inspect_ai.dataset import Sample
 from inspect_ai.log import EvalLog, read_eval_log
 from inspect_ai.scorer import CORRECT, INCORRECT, Score, Target
 from inspect_ai.solver import Generate, TaskState, solver
+
+from pet_helper.evals import judge as judge_module
+from pet_helper.evals.budget import JUDGE_CALL_RESERVE_USD, RoundBudget
+from pet_helper.evals.cases import EvalCase, JudgeEntry
 from pet_helper.evals.judge import (
     CRITERIA,
     CRITERION_PROMPTS,
@@ -45,10 +50,6 @@ from pet_helper.evals.judge import (
     judge_scorer,
     main,
 )
-
-from pet_helper.evals import judge as judge_module
-from pet_helper.evals.budget import JUDGE_CALL_RESERVE_USD, RoundBudget
-from pet_helper.evals.cases import EvalCase, JudgeEntry
 from pet_helper.trace import BudgetExceeded, UnknownPriceError, cost_usd
 
 SLEEP = 0.4
@@ -1163,6 +1164,17 @@ def test_it_should_print_the_cost_estimate_before_asking_for_confirmation(
     _, output = run_smoke(capsys)
 
     assert "US$" in output
+
+
+def test_it_should_offer_the_short_yes_the_confirmation_accepts_in_its_prompt(
+    answer, capsys
+):
+    answer("n\n")
+
+    _, output = run_smoke(capsys)
+
+    prompt = output.split("Make these paid calls")[1].split("Aborted")[0]
+    assert re.search(r"\by\b", prompt)
 
 
 @pytest.mark.parametrize("typed", ["\n", "no\n", "n\n", "maybe\n", "yess\n", ""])

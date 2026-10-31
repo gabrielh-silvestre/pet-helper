@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import subprocess
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -13,11 +14,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
+import anthropic
 from inspect_ai.log import EvalSample, read_eval_log
 from inspect_ai.model import ChatMessage
 from langchain_core.messages.ai import UsageMetadata
 
 from pet_helper.conversation import DEFAULT_KIT_DIR, system_prompt_sha256
+from pet_helper.evals import judge as judge_module
 from pet_helper.evals.budget import (
     BATCH_PRICE_FACTOR,
     JUDGE_MAX_TOKENS,
@@ -46,6 +49,7 @@ from pet_helper.evals.judge import (
 )
 from pet_helper.evals.judge import _judge_charged as judge_charged
 from pet_helper.evals.task import (
+    JUDGE_UNPARSABLE,
     GatewayFactory,
     _with_judge_verdicts,
     eval_task,
@@ -57,6 +61,7 @@ from pet_helper.gateway import (
     resolve_anthropic_model,
     resolve_ollama_model,
 )
+from pet_helper.orders import FAILURE_ENV
 from pet_helper.trace import CONTENT_ENV, UnknownPriceError, find_raw_pii
 
 KIT_DIR = Path(DEFAULT_KIT_DIR)
@@ -69,8 +74,11 @@ ANTHROPIC_CONCURRENCY = 8
 OLLAMA_CONCURRENCY = 1
 JUDGE_SLOTS = 4
 
-# the rounds run with the fallback off and the trace content on, whatever the caller has set
-_ROUND_ENVIRONMENT = {FALLBACK_ENV: "none", CONTENT_ENV: "1"}
+# the rounds run with the fallback off, the trace content on and no simulated order API failure
+# (None: unset), whatever the caller has set
+_ROUND_ENVIRONMENT = {FALLBACK_ENV: "none", CONTENT_ENV: "1", FAILURE_ENV: None}
+# what a round runs: a change to any of these makes its results unreproducible from the commit
+_WATCHED_PATHS = ("src", "evals/cases", "evals/fixtures", "kit", "pyproject.toml")
 _COLUMNS = (
     "case_id",
     "suite",
@@ -176,6 +184,8 @@ class _Run:
     reason: str | None
     entries: list[JudgeEntry]
     transcript: Transcript | None
+    # the inline judge answered something unreadable: an error until a rejudge reads it again
+    unparsed: bool = False
 
     @property
     def session_id(self) -> str:
@@ -234,24 +244,29 @@ def _git(*args: str) -> str:
 
 
 def current_git_state() -> GitState:
-    changed = _git(
-        "status", "--porcelain", "--untracked-files=no", "--", "src", "evals/cases"
-    )
+    # the paths are relative to the repository root, whatever the working directory
+    root = _git("rev-parse", "--show-toplevel")
+    changed = _git("-C", root, "status", "--porcelain", "--", *_WATCHED_PATHS)
     return GitState(_git("rev-parse", "HEAD"), bool(changed))
+
+
+def _set_environment(name: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 
 @contextmanager
 def _round_environment() -> Iterator[None]:
     saved = {name: os.environ.get(name) for name in _ROUND_ENVIRONMENT}
-    os.environ.update(_ROUND_ENVIRONMENT)
+    for name, value in _ROUND_ENVIRONMENT.items():
+        _set_environment(name, value)
     try:
         yield
     finally:
         for name, value in saved.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
+            _set_environment(name, value)
 
 
 # estimate
@@ -262,7 +277,15 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(file))
 
 
-def _estimate(results_root: Path, selection: Sequence[EvalCase], runs: int) -> Estimate:
+def _estimate(
+    results_root: Path, selection: Sequence[EvalCase], runs: int, judge: str
+) -> Estimate:
+    criteria = sum(len(case.judge) for case in selection)
+    judge_usd = JUDGE_CALL_ESTIMATE_USD * criteria * runs
+    if judge == "none":
+        judge_usd = Decimal(0)
+    elif judge == "batch":
+        judge_usd *= BATCH_PRICE_FACTOR
     saved = (
         [path for path in results_root.iterdir() if (path / "cases.csv").is_file()]
         if results_root.is_dir()
@@ -277,16 +300,18 @@ def _estimate(results_root: Path, selection: Sequence[EvalCase], runs: int) -> E
         ]
         if costs:
             info = last / "round.json"
-            saved_runs = (
-                json.loads(info.read_text(encoding="utf-8")).get("runs", DEFAULT_RUNS)
-                if info.is_file()
-                else DEFAULT_RUNS
+            saved_info = (
+                json.loads(info.read_text(encoding="utf-8")) if info.is_file() else {}
             )
+            saved_runs = saved_info.get("runs", DEFAULT_RUNS)
             mean = sum(costs, Decimal(0)) / len(costs)
             total = mean * len(selection) * runs / saved_runs
+            # a round saved without the judge has no judge cost in its mean
+            if saved_info.get("judge_mode") == "none":
+                total += judge_usd
             return Estimate(total, "last_round", last.name)
     turns = sum(len(case.turns) for case in selection)
-    return Estimate(DEFAULT_TURN_COST_USD * turns * runs, "default")
+    return Estimate(DEFAULT_TURN_COST_USD * turns * runs + judge_usd, "default")
 
 
 # reading a round back
@@ -320,12 +345,16 @@ def _transcript_of(sample: EvalSample) -> Transcript:
 
 def _run_of(sample: EvalSample, epoch_offset: int) -> _Run:
     outcome, failed_checks, reason = "error", [], None
+    unparsed = False
     if sample.error is None:
         score = cast(
             Mapping[str, Any], next(iter((sample.scores or {}).values())).metadata
         )
+        unparsed = score["reason"] == JUDGE_UNPARSABLE
         outcome, failed_checks, reason = _without_judge(
-            score["outcome"], score["failed_checks"], score["reason"]
+            score["outcome"],
+            score["failed_checks"],
+            None if unparsed else score["reason"],
         )
     metadata = sample.metadata
     return _Run(
@@ -342,6 +371,7 @@ def _run_of(sample: EvalSample, epoch_offset: int) -> _Run:
             for entry in metadata["judge"]
         ],
         transcript=_transcript_of(sample) if outcome in _JUDGEABLE else None,
+        unparsed=unparsed,
     )
 
 
@@ -381,6 +411,12 @@ def _verdict_of(record: Mapping[str, Any]) -> Verdict:
     )
 
 
+def _unjudged(run: _Run, verdicts: Mapping[tuple[str, str], Any]) -> bool:
+    return run.outcome in _JUDGEABLE and any(
+        (run.session_id, entry.criterion) not in verdicts for entry in run.entries
+    )
+
+
 def _collect(directory: Path, runs: int) -> _Collected:
     log_path = directory / "judge.jsonl"
     verdicts = current_verdicts(log_path)
@@ -402,8 +438,14 @@ def _collect(directory: Path, runs: int) -> _Collected:
                 for entry in run.entries
                 if (run.session_id, entry.criterion) in verdicts
             ]
+            final = _with_judge_verdicts(
+                run.outcome, run.failed_checks, run.reason, judged
+            )
+            # a reply the judge made unreadable counts as an error until a verdict is in
             finals.append(
-                _with_judge_verdicts(run.outcome, run.failed_checks, run.reason, judged)
+                ("error", [], None)
+                if run.unparsed and _unjudged(run, verdicts)
+                else final
             )
             calls = _model_calls(directory, run.session_id)
             price_unknown |= any(call.get("pet_helper.price_unknown") for call in calls)
@@ -438,14 +480,7 @@ def _collect(directory: Path, runs: int) -> _Collected:
                     if outcome == "error"
                 ],
                 cost_usd=cost,
-                judge_pending=any(
-                    run.outcome in _JUDGEABLE
-                    and any(
-                        (run.session_id, entry.criterion) not in verdicts
-                        for entry in run.entries
-                    )
-                    for run in case_runs
-                ),
+                judge_pending=any(_unjudged(run, verdicts) for run in case_runs),
             )
         )
     hashes = {record["judge_prompt_sha256"] for record in verdicts.values()}
@@ -504,9 +539,21 @@ def _finalize(directory: Path, runs: int, fields: Mapping[str, Any]) -> _Collect
 
 
 def _stop(
-    budget: _RoundBudget, collected: _Collected, capped: bool, directory: Path
+    budget: _RoundBudget,
+    collected: _Collected,
+    capped: bool,
+    directory: Path,
+    judge_error: anthropic.APIError | None = None,
 ) -> tuple[str | None, str | None]:
-    if budget.halted:
+    if judge_error is not None:
+        # the class and the status only: the body of the error may quote the held-out cases
+        status = getattr(judge_error, "status_code", None)
+        reason, line = (
+            "judge_error",
+            f"Round stopped: the judge failed with {type(judge_error).__name__}"
+            + (f" (status {status})" if status else ""),
+        )
+    elif budget.halted:
         if collected.price_unknown or budget.price_unknown:
             reason, line = (
                 "unknown_price",
@@ -540,18 +587,41 @@ def _judge_items(
     ]
 
 
+def _missing_verdicts(
+    items: Sequence[tuple[Judged, JudgeEntry]], log_path: Path
+) -> list[tuple[Judged, JudgeEntry]]:
+    current = current_verdicts(log_path)
+    prompt_hash = judge_module.judge_prompt_sha256()
+    return [
+        (judged, entry)
+        for judged, entry in items
+        if current.get((judged.run_id, entry.criterion), {}).get("judge_prompt_sha256")
+        != prompt_hash
+    ]
+
+
 def _judge_sync(
     items: Sequence[tuple[Judged, JudgeEntry]],
     client: JudgeClient,
     log_path: Path,
     budget: _RoundBudget,
-) -> bool:
+) -> tuple[bool, anthropic.APIError | None]:
+    failures: list[anthropic.APIError] = []
+    failed = threading.Event()
+
     def judge_one(item: tuple[Judged, JudgeEntry]) -> bool:
+        if failed.is_set():
+            return True
         judged, entry = item
         try:
             judge_charged(entry, judged, client, log_path, budget)
         except BudgetExceeded:
             return False
+        except anthropic.APIError as error:
+            # the provider is failing: the next calls would only fail and bill the reserve
+            failures.append(error)
+            failed.set()
+            return True
         except UnknownPriceError:
             budget.on_unknown_price()
             return False
@@ -561,7 +631,8 @@ def _judge_sync(
         return True
 
     with ThreadPoolExecutor(JUDGE_SLOTS, thread_name_prefix="rejudge") as pool:
-        return all(list(pool.map(judge_one, items)))
+        within_budget = all(list(pool.map(judge_one, items)))
+    return within_budget, failures[0] if failures else None
 
 
 def _batch_ids(
@@ -584,7 +655,7 @@ def _settle_batch(
         try:
             collection = client.collect(batch_id, list(ids))
             break
-        except BatchNotEnded:
+        except (BatchNotEnded, anthropic.APIError):
             if time.monotonic() >= deadline:
                 return False
             time.sleep(poll_seconds)
@@ -593,7 +664,9 @@ def _settle_batch(
         judged, entry = ids[item_id]
         try:
             verdict = verdict_from_reply(text, usage, client.model)
-        except JudgeReplyError:
+        except JudgeReplyError as error:
+            # the reply was billed even though it cannot be read
+            cost += (error.cost or Decimal(0)) * BATCH_PRICE_FACTOR
             continue
         except UnknownPriceError:
             budget.on_unknown_price()
@@ -664,13 +737,18 @@ def run_round(
 ) -> RoundResult:
     if reference_round is not None and len(selection) != 1:
         raise ValueError("A decisive rerun takes exactly one case")
-    estimate = _estimate(results_root, selection, runs)
+    estimate = _estimate(results_root, selection, runs, judge)
     if not confirm(estimate):
         return RoundResult(round_id, estimate, aborted=True)
 
     git = git_state()
     started = clock()
-    round_id = round_id or started.strftime("%Y-%m-%dT%H%M%S")
+    if round_id is None:
+        stamp = started.strftime("%Y-%m-%dT%H%M%S")
+        round_id, suffix = stamp, 1
+        while (results_root / round_id).exists():
+            suffix += 1
+            round_id = f"{stamp}-{suffix}"
     directory = results_root / round_id
     directory.mkdir(parents=True)
     log_path = directory / "judge.jsonl"
@@ -684,6 +762,7 @@ def run_round(
     budget = _RoundBudget(budget_usd)
 
     capped = False
+    judge_error = None
     batch_id = None
     with _round_environment(), make_executor(max_samples, JUDGE_SLOTS) as pool:
         made = 0
@@ -709,7 +788,7 @@ def run_round(
             # an unable or errored run is retried, up to as many extra runs as the round asked for
             if valid >= runs or budget.halted or collected.not_run or made >= 2 * runs:
                 break
-            count = runs - valid
+            count = min(runs - valid, 2 * runs - made)
     if batch is not None:
         items = _judge_items(
             _read_runs(directory), {case.id: case for case in selection}
@@ -729,6 +808,9 @@ def run_round(
             )
         except BudgetExceeded:
             capped = True
+        except anthropic.APIError as error:
+            # the submission failed: the conversations are paid for, so the round is saved pending
+            judge_error = error
 
     judge_model = (inline_judge or batch).model if inline_judge or batch else None
     fields = {
@@ -754,7 +836,7 @@ def run_round(
         **({"batch_id": batch_id} if batch_id else {}),
     }
     collected = _finalize(directory, runs, fields)
-    stop_reason, stop_line = _stop(budget, collected, capped, directory)
+    stop_reason, stop_line = _stop(budget, collected, capped, directory, judge_error)
     decision = None
     if reference_round is not None:
         [case] = collected.cases
@@ -776,20 +858,26 @@ def rejudge_round(
     budget_usd: Decimal = Decimal(5),
 ) -> RoundResult:
     saved = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
-    items = _judge_items(_read_runs(round_dir), {case.id: case for case in selection})
+    log_path = round_dir / "judge.jsonl"
+    items = _missing_verdicts(
+        _judge_items(_read_runs(round_dir), {case.id: case for case in selection}),
+        log_path,
+    )
     estimate = Estimate(JUDGE_CALL_ESTIMATE_USD * len(items), "default")
     if not confirm(estimate):
         return RoundResult(saved["round_id"], estimate, aborted=True)
 
     budget = _RoundBudget(budget_usd)
-    capped = not _judge_sync(items, judge_client, round_dir / "judge.jsonl", budget)
+    within_budget, judge_error = _judge_sync(items, judge_client, log_path, budget)
     fields = {
         **saved,
         "models": {**saved["models"], "judge": judge_client.model},
         "judge_mode": "sync",
     }
     collected = _finalize(round_dir, saved["runs"], fields)
-    stop_reason, stop_line = _stop(budget, collected, capped, round_dir)
+    stop_reason, stop_line = _stop(
+        budget, collected, not within_budget, round_dir, judge_error
+    )
     return RoundResult(
         saved["round_id"], estimate, False, collected.cases, stop_reason, stop_line
     )

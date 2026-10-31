@@ -212,6 +212,14 @@ BLOCKED = _ids(
         "ast-grep-path",
         _tool(f"{OMC}ast_grep_search", pattern="x", path="evals/held_out"),
     ),
+    (
+        "grep-excluding-another-folder-while-naming-the-word",
+        _bash("grep -rn secret . --exclude-dir=.git -e held_out"),
+    ),
+    (
+        "find-excluding-another-path-while-naming-the-word",
+        _bash("find . -not -path '*/.git/*' -name held_out"),
+    ),
     ("grep-recursive-on-dot", _bash("grep -r x .")),
     ("grep-recursive-capital-r", _bash("grep -R x .")),
     ("grep-recursive-without-path", _bash("grep -rn x")),
@@ -303,6 +311,14 @@ ALLOWED = _ids(
         "find-excluding-the-folder",
         _bash("find . -name '*.yaml' -not -path '*/held_out/*'"),
     ),
+    (
+        "grep-excluding-the-folder-while-searching-another-word",
+        _bash("grep -rn secret . --exclude-dir=held_out"),
+    ),
+    (
+        "find-excluding-the-folder-by-path-pattern",
+        _bash("find . -not -path '*/held_out/*' -name '*.py'"),
+    ),
     ("grep-recursive-on-src", _bash("grep -r x src")),
     ("find-on-src", _bash("find src -name '*.py'")),
     (
@@ -362,3 +378,130 @@ def test_it_should_say_how_to_exclude_the_folder_when_blocking_an_ancestor_searc
     result = _run(HELD_OUT, payload)
 
     assert hint in result.stderr
+
+
+PAID_HOOK = next(
+    (
+        entry
+        for entry in PRE_TOOL_USE
+        if any("paid-command.jq" in hook["command"] for hook in entry["hooks"])
+    ),
+    None,
+)
+
+
+def _run_paid(payload, held_out=False):
+    assert PAID_HOOK, "settings.json wires no PreToolUse hook that runs paid-command.jq"
+    return _run(PAID_HOOK["hooks"][0]["command"], payload, held_out=held_out)
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "Bash",
+        f"{CTX}ctx_execute",
+        f"{CTX}ctx_execute_file",
+        f"{CTX}ctx_batch_execute",
+        f"{OMC}python_repl",
+    ],
+)
+def test_it_should_apply_the_paid_command_hook_to_every_shell_tool(tool_name):
+    assert PAID_HOOK, "settings.json wires no PreToolUse hook that runs paid-command.jq"
+    assert re.fullmatch(PAID_HOOK["matcher"], tool_name)
+
+
+PAID_BLOCKED = _ids(
+    ("eval", _bash("uv run pet-helper eval")),
+    ("eval-fed-by-yes", _bash("yes | uv run pet-helper eval")),
+    ("eval-rejudge", _bash("uv run pet-helper eval --rejudge r1")),
+    ("eval-collect", _bash("uv run pet-helper eval --collect r1")),
+    ("eval-from-the-venv", _bash(".venv/bin/pet-helper eval")),
+    ("eval-inside-sh-c", _bash("sh -c 'pet-helper eval'")),
+    ("judge-smoke", _bash("uv run python -m pet_helper.evals.judge smoke")),
+    (
+        "labels-judge-pool",
+        _bash("uv run python -m pet_helper.evals.labels judge-pool r1 --split dev"),
+    ),
+    (
+        "ctx-execute-shell",
+        _tool(f"{CTX}ctx_execute", language="shell", code="uv run pet-helper eval"),
+    ),
+    (
+        "ctx-batch-execute-command",
+        _tool(
+            f"{CTX}ctx_batch_execute",
+            commands=[
+                {"label": "ok", "command": "ls src"},
+                {"label": "paid", "command": "yes | uv run pet-helper eval"},
+            ],
+        ),
+    ),
+    (
+        "python-repl-code",
+        _tool(f"{OMC}python_repl", code="import os; os.system('pet-helper eval')"),
+    ),
+)
+
+PAID_ALLOWED = _ids(
+    ("pytest", _bash("uv run pytest -q --cov")),
+    ("pytest-one-file", _bash("uv run pytest tests/unit/test_eval_cli.py -q")),
+    (
+        "analysis-report",
+        _bash("uv run python -m pet_helper.evals.analysis report r1"),
+    ),
+    (
+        "labels-present",
+        _bash("uv run python -m pet_helper.evals.labels present r1 --n 10"),
+    ),
+    (
+        "labels-record",
+        _bash("uv run python -m pet_helper.evals.labels record r1 labels.json"),
+    ),
+    (
+        "labels-tpr-tnr",
+        _bash("uv run python -m pet_helper.evals.labels tpr-tnr r1 --split dev"),
+    ),
+    (
+        "labels-seed",
+        _bash("uv run python -m pet_helper.evals.labels seed r1 --seed 3"),
+    ),
+    ("labels-pool", _bash("uv run python -m pet_helper.evals.labels pool r1")),
+    ("grep-the-word-judge", _bash("grep -n judge src/pet_helper/evals/judge.py")),
+    ("chat", _bash("uv run pet-helper chat")),
+    ("metrics", _bash("uv run pet-helper metrics traces/")),
+    (
+        "ctx-execute-unrelated-code",
+        _tool(f"{CTX}ctx_execute", language="shell", code="uv run pytest -q"),
+    ),
+)
+
+
+@pytest.mark.parametrize("payload", PAID_BLOCKED)
+def test_it_should_block_every_spelling_of_a_paid_command(payload):
+    result = _run_paid(payload)
+
+    assert result.returncode == 2
+
+
+@pytest.mark.parametrize("agent", ["", "oh-my-claudecode:executor", "zeus-verifier-x"])
+def test_it_should_block_a_paid_command_for_the_main_session_and_every_subagent(agent):
+    result = _run_paid(_bash("uv run pet-helper eval", agent=agent))
+
+    assert result.returncode == 2
+
+
+def test_it_should_block_a_paid_command_in_a_session_started_for_the_held_out_cases():
+    result = _run_paid(_bash("uv run pet-helper eval"), held_out=True)
+
+    assert result.returncode == 2
+
+
+def test_it_should_tell_the_agent_that_the_owner_runs_paid_commands_in_their_own_terminal():
+    result = _run_paid(_bash("uv run pet-helper eval"))
+
+    assert "own terminal" in result.stderr
+
+
+@pytest.mark.parametrize("payload", PAID_ALLOWED)
+def test_it_should_not_block_free_commands_that_share_a_paid_module_or_word(payload):
+    assert _run_paid(payload).returncode == 0

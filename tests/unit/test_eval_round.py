@@ -4,6 +4,7 @@ import csv
 import json
 import os
 import re
+import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -11,12 +12,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import anthropic
+import httpx
 import httpx2
 import pytest
 from inspect_ai.log import read_eval_log
 
 from pet_helper.conversation import system_prompt_sha256
 from pet_helper.evals import judge as judge_module
+from pet_helper.evals import round as round_module
 from pet_helper.evals.budget import (
     ASSISTANT_CALL_RESERVE_USD,
     BATCH_PRICE_FACTOR,
@@ -33,14 +37,18 @@ from pet_helper.evals.judge import (
 )
 from pet_helper.evals.round import (
     DEFAULT_TURN_COST_USD,
+    JUDGE_CALL_ESTIMATE_USD,
     Estimate,
     GitState,
     RoundResult,
+    collect_round,
+    current_git_state,
     rejudge_round,
     run_round,
 )
 from pet_helper.gateway import DEFAULT_ANTHROPIC_MODEL, AnthropicGateway, FakeGateway
 from pet_helper.gateway.config import FALLBACK_ENV
+from pet_helper.orders.api import FAILURE_ENV
 from pet_helper.trace import cost_usd, find_raw_pii
 from pet_helper.trace.tracer import CONTENT_ENV
 from tests.unit.test_eval_task import (
@@ -165,23 +173,53 @@ class GarbledJudge(JudgeStub):
         return ("not json at all", usage) if self.marker in user else (text, usage)
 
 
+class FlakyJudge(JudgeStub):
+    """Judge client that answers the first calls and then fails with the given error."""
+
+    def __init__(self, error: Exception, *, after: int) -> None:
+        super().__init__()
+        self.failure = error
+        self.after = after
+
+    def complete(self, system: str, user: str) -> tuple[str, dict]:
+        if len(self.calls) >= self.after:
+            self.calls.append((system, user))
+            raise self.failure
+        return super().complete(system, user)
+
+
 class BatchStub:
     """Batch client that records the submissions and answers a fixed verdict once ready."""
 
     model = DEFAULT_JUDGE_MODEL
 
-    def __init__(self, *, ready: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        ready: bool = True,
+        reply: str | None = None,
+        submit_error: Exception | None = None,
+        collect_error: Exception | None = None,
+    ) -> None:
         self.ready = ready
+        # a reply sent as is, to stand for one that cannot be parsed
+        self.reply = reply
+        self.submit_error = submit_error
+        self.collect_error = collect_error
         self.submitted: list[list[Any]] = []
 
     def submit(self, items: Sequence[Any]) -> str:
+        if self.submit_error is not None:
+            raise self.submit_error
         self.submitted.append(list(items))
         return "batch-1"
 
     def collect(self, batch_id: str, item_ids: Sequence[str]) -> BatchCollection:
+        if self.collect_error is not None:
+            raise self.collect_error
         if not self.ready:
             raise BatchNotEnded(batch_id)
-        reply = json.dumps({"critique": "Looks fine.", "verdict": "pass"})
+        reply = self.reply or json.dumps({"critique": "Looks fine.", "verdict": "pass"})
         return BatchCollection({item_id: (reply, JUDGE_USAGE) for item_id in item_ids})
 
 
@@ -237,13 +275,35 @@ def replay(
     judge_client: JudgeStub,
     **options: Any,
 ) -> RoundResult:
-    return rejudge_round(
-        root / "round-1",
-        selection,
-        judge_client,
-        confirm=lambda estimate: True,
-        budget_usd=Decimal(5),
+    options = {
+        "confirm": lambda estimate: True,
+        "budget_usd": Decimal(5),
         **options,
+    }
+    return rejudge_round(root / "round-1", selection, judge_client, **options)
+
+
+def estimated(root: Path, selection: Sequence[EvalCase], **options: Any) -> Estimate:
+    """The estimate a round would show, refused before any client is built."""
+    seen: list[Estimate] = []
+    play(
+        root,
+        selection,
+        Gateways(),
+        confirm=lambda estimate: seen.append(estimate) or False,
+        **options,
+    )
+    return seen[0]
+
+
+def api_error(kind: str, message: str = "provider error") -> anthropic.APIError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    if kind == "connection":
+        return anthropic.APIConnectionError(request=request)
+    if kind == "timeout":
+        return anthropic.APITimeoutError(request=request)
+    return anthropic.BadRequestError(
+        message, response=httpx.Response(400, request=request), body=None
     )
 
 
@@ -261,7 +321,9 @@ def read_header(root: Path) -> list[str]:
         return next(csv.reader(file))
 
 
-def save_round(root: Path, round_id: str, costs: Mapping[str, str]) -> None:
+def save_round(
+    root: Path, round_id: str, costs: Mapping[str, str], **info: Any
+) -> None:
     directory = root / round_id
     directory.mkdir(parents=True)
     with (directory / "cases.csv").open("w", encoding="utf-8", newline="") as file:
@@ -271,7 +333,7 @@ def save_round(root: Path, round_id: str, costs: Mapping[str, str]) -> None:
             writer.writerow(
                 {**dict.fromkeys(COLUMNS, ""), "case_id": case_id, "cost_usd": cost}
             )
-    (directory / "round.json").write_text(json.dumps({"round_id": round_id}))
+    (directory / "round.json").write_text(json.dumps({"round_id": round_id, **info}))
 
 
 def outcomes(result: RoundResult) -> list[str]:
@@ -395,6 +457,60 @@ def test_it_should_expose_the_estimate_in_the_result(root):
     result = play(root, [make_case()], Gateways())
 
     assert result.estimate.source == "default"
+
+
+def test_it_should_add_a_sync_judge_call_per_run_to_the_default_estimate(root):
+    case = make_case("judged", judge=["tone"])
+
+    estimate = estimated(root, [case], judge="sync")
+
+    # one turn and one criterion, 3 runs
+    assert estimate.total_usd == (DEFAULT_TURN_COST_USD + JUDGE_CALL_ESTIMATE_USD) * 3
+
+
+def test_it_should_add_a_judge_call_per_criterion_to_the_estimate(root):
+    case = make_case("judged", judge=["tone", "escalation_judgment"])
+
+    estimate = estimated(root, [case], judge="sync")
+
+    assert (
+        estimate.total_usd == (DEFAULT_TURN_COST_USD + 2 * JUDGE_CALL_ESTIMATE_USD) * 3
+    )
+
+
+def test_it_should_add_half_a_judge_call_per_run_to_the_estimate_of_a_batch_judge(root):
+    case = make_case("judged", judge=["tone"])
+
+    estimate = estimated(root, [case], judge="batch")
+
+    judge_part = JUDGE_CALL_ESTIMATE_USD * BATCH_PRICE_FACTOR * 3
+    assert estimate.total_usd == DEFAULT_TURN_COST_USD * 3 + judge_part
+
+
+def test_it_should_add_nothing_to_the_estimate_when_the_judge_is_none(root):
+    case = make_case("judged", judge=["tone"])
+
+    estimate = estimated(root, [case], judge="none")
+
+    assert estimate.total_usd == DEFAULT_TURN_COST_USD * 3
+
+
+def test_it_should_add_the_judge_to_an_estimate_based_on_a_round_without_judge(root):
+    save_round(root, "round-0", {"a": "0.02"}, runs=3, judge_mode="none")
+    case = make_case("judged", judge=["tone"])
+
+    estimate = estimated(root, [case], judge="sync")
+
+    assert estimate.total_usd == Decimal("0.02") + JUDGE_CALL_ESTIMATE_USD * 3
+
+
+def test_it_should_add_nothing_to_an_estimate_based_on_a_judged_round(root):
+    save_round(root, "round-0", {"a": "0.02"}, runs=3, judge_mode="sync")
+    case = make_case("judged", judge=["tone"])
+
+    estimate = estimated(root, [case], judge="sync")
+
+    assert estimate.total_usd == Decimal("0.02")
 
 
 # outcomes
@@ -697,15 +813,15 @@ def test_it_should_record_the_batch_id_while_the_batch_is_pending(root):
     assert (saved["batch_id"], saved["judge_pending"]) == ("batch-1", True)
 
 
+def garbled_cases() -> list[EvalCase]:
+    return [make_case("bad", judge=["tone"]), make_case("good", judge=["tone"])]
+
+
 @pytest.fixture
 def garbled(root):
-    cases = [
-        make_case("bad", judge=["tone"]),
-        make_case("good", judge=["tone"]),
-    ]
     result = play(
         root,
-        cases,
+        garbled_cases(),
         Gateways({"bad": ["Resposta ruim."], "good": ["Resposta boa."]}),
         judge_client=GarbledJudge("Resposta ruim."),
     )
@@ -734,6 +850,25 @@ def test_it_should_not_stop_the_round_for_an_unparsable_judge_reply(garbled):
     _, result = garbled
 
     assert result.stop_reason is None
+
+
+def test_it_should_keep_the_runs_of_an_unparsable_judge_reply_pending(garbled):
+    cases, _ = garbled
+
+    assert cases["bad"].judge_pending is True
+
+
+def test_it_should_mark_the_round_pending_for_an_unparsable_judge_reply(garbled, root):
+    assert read_json(root)["judge_pending"] is True
+
+
+def test_it_should_turn_the_runs_of_an_unparsable_judge_reply_into_passes_when_rejudged(
+    garbled, root
+):
+    result = replay(root, garbled_cases(), JudgeStub())
+
+    bad = {case.case_id: case for case in result.cases}["bad"]
+    assert (bad.errors, bad.passes, bad.k) == (0, 3, "3/3")
 
 
 # layout
@@ -982,6 +1117,20 @@ def test_it_should_leave_no_verdict_when_the_cap_stops_the_retries(root):
     assert result.stop_reason == "cap"
 
 
+def test_it_should_make_no_more_than_twice_the_runs_in_a_decisive_rerun(root):
+    gateways = Plan(["ok"], default="unable")
+
+    decisive(root, gateways)
+
+    assert len(gateways.built) == 20
+
+
+def test_it_should_leave_no_verdict_when_the_retries_run_out_at_twice_the_runs(root):
+    result = decisive(root, Plan(["ok"], default="unable"))
+
+    assert (result.decision.verdict, result.decision.valid_runs) == ("no_verdict", 1)
+
+
 def test_it_should_not_make_a_decision_without_a_reference_round(root):
     result = play(root, [steady()], Plan())
 
@@ -1113,6 +1262,309 @@ def test_it_should_record_the_second_hash_when_the_rejudge_replaces_every_verdic
     assert (saved["judge_prompt_sha256"], saved["judge_pending"]) == ("hash-b", False)
 
 
+# judge failures
+
+API_ERRORS = ["connection", "timeout", "bad_request"]
+
+
+def lose_the_batch(root, kind: str, message: str = "provider error") -> RoundResult:
+    return play(
+        root,
+        [make_case("judged", judge=["tone"])],
+        Gateways(),
+        runs=1,
+        judge="batch",
+        batch_client=BatchStub(submit_error=api_error(kind, message)),
+    )
+
+
+@pytest.mark.parametrize("kind", API_ERRORS)
+def test_it_should_save_the_round_pending_when_the_batch_submit_fails(root, kind):
+    lose_the_batch(root, kind)
+
+    saved = read_json(root)
+    assert (saved["judge_pending"], "batch_id" in saved) == (True, False)
+    assert len(read_rows(root)) == 1
+
+
+@pytest.mark.parametrize("kind", API_ERRORS)
+def test_it_should_stop_the_round_as_a_judge_error_when_the_batch_submit_fails(
+    root, kind
+):
+    result = lose_the_batch(root, kind)
+
+    assert result.stop_reason == "judge_error"
+
+
+def test_it_should_leave_the_error_body_out_of_the_stop_line(root):
+    result = lose_the_batch(root, "bad_request", "SECRET-BODY")
+
+    assert result.stop_line and "SECRET-BODY" not in result.stop_line
+    assert "\n" not in result.stop_line
+
+
+def test_it_should_let_an_error_that_is_not_from_the_api_escape_the_batch_submit(root):
+    batch = BatchStub(submit_error=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        play(
+            root,
+            [make_case("judged", judge=["tone"])],
+            Gateways(),
+            runs=1,
+            judge="batch",
+            batch_client=batch,
+        )
+
+
+def test_it_should_let_a_round_whose_batch_submit_failed_be_rejudged(root):
+    cases = [make_case("judged", judge=["tone"])]
+    lose_the_batch(root, "connection")
+
+    replay(root, cases, JudgeStub())
+
+    assert read_json(root)["judge_pending"] is False
+
+
+@pytest.fixture
+def lost_collect(root):
+    cases = [make_case("judged", judge=["tone"])]
+    batch = BatchStub(collect_error=api_error("timeout"))
+    play(root, cases, Gateways(), runs=1, judge="batch", batch_client=batch)
+    return cases
+
+
+def test_it_should_keep_the_batch_id_when_the_first_collect_fails(lost_collect, root):
+    saved = read_json(root)
+
+    assert (saved["batch_id"], saved["judge_pending"]) == ("batch-1", True)
+
+
+def test_it_should_complete_the_round_when_a_later_collect_succeeds(lost_collect, root):
+    collect_round(root / "round-1", lost_collect, BatchStub())
+
+    saved = read_json(root)
+    assert (saved.get("batch_id"), saved["judge_pending"]) == (None, False)
+
+
+def test_it_should_keep_the_batch_pending_when_a_later_collect_fails_again(
+    lost_collect, root
+):
+    failing = BatchStub(collect_error=api_error("connection"))
+
+    collect_round(root / "round-1", lost_collect, failing)
+
+    saved = read_json(root)
+    assert (saved["batch_id"], saved["judge_pending"]) == ("batch-1", True)
+
+
+@pytest.fixture(params=API_ERRORS)
+def broken_rejudge(request, root, monkeypatch):
+    cases = [make_case("judged", judge=["tone"])]
+    play(root, cases, Gateways())
+    monkeypatch.setattr(round_module, "JUDGE_SLOTS", 1)
+    judge = FlakyJudge(api_error(request.param), after=1)
+    return judge, replay(root, cases, judge)
+
+
+def test_it_should_stop_calling_the_judge_after_the_first_api_error_of_a_rejudge(
+    broken_rejudge,
+):
+    judge, _ = broken_rejudge
+
+    # the verdict that went through and the call that failed
+    assert len(judge.calls) == 2
+
+
+def test_it_should_keep_the_verdicts_written_before_the_api_error_of_a_rejudge(
+    broken_rejudge, root
+):
+    assert len(current_verdicts(root / "round-1" / "judge.jsonl")) == 1
+
+
+def test_it_should_finalize_the_round_after_the_api_error_of_a_rejudge(
+    broken_rejudge, root
+):
+    saved = read_json(root)
+
+    assert saved["judge_pending"] is True
+    assert Decimal(saved["total_cost_usd"]) == JUDGE_CALL_COST
+
+
+def test_it_should_stop_the_rejudge_as_a_judge_error_on_an_api_error(broken_rejudge):
+    _, result = broken_rejudge
+
+    assert result.stop_reason == "judge_error"
+
+
+def test_it_should_not_judge_again_a_verdict_current_with_the_same_prompt(
+    pending, root
+):
+    cases, _ = pending
+    replay(root, cases, JudgeStub())
+    again = JudgeStub()
+
+    replay(root, cases, again)
+
+    assert again.calls == []
+
+
+def test_it_should_judge_again_a_verdict_made_with_another_prompt(
+    pending, root, monkeypatch
+):
+    cases, _ = pending
+    replay(root, cases, JudgeStub())
+    monkeypatch.setattr(judge_module, "judge_prompt_sha256", lambda: "hash-b")
+    again = JudgeStub()
+
+    replay(root, cases, again)
+
+    assert len(again.calls) == 3
+
+
+def test_it_should_estimate_a_rejudge_only_for_the_calls_still_missing(root):
+    first, second = make_case("a", judge=["tone"]), make_case("b", judge=["tone"])
+    play(root, [first, second], Gateways(), runs=1)
+    replay(root, [first], JudgeStub())
+    seen: list[Estimate] = []
+
+    replay(
+        root,
+        [first, second],
+        JudgeStub(),
+        confirm=lambda estimate: seen.append(estimate) or True,
+    )
+
+    assert seen[0].total_usd == JUDGE_CALL_ESTIMATE_USD
+
+
+def test_it_should_refuse_a_sync_rejudge_call_the_configured_model_could_not_pay(
+    pending, root
+):
+    cases, _ = pending
+    judge = JudgeStub()
+    judge.model = "claude-opus-5-5"
+
+    # above the worst case of the default judge model, below the one of Opus
+    result = replay(root, cases, judge, budget_usd=Decimal("0.1"))
+
+    assert (judge.calls, result.stop_reason) == ([], "cap")
+
+
+def test_it_should_charge_an_unparsable_batch_reply_to_the_round_budget(
+    root, monkeypatch
+):
+    settled: list[Decimal] = []
+
+    class SpyBudget(round_module._RoundBudget):
+        def on_cost(self, actual: Decimal) -> None:
+            settled.append(actual)
+            super().on_cost(actual)
+
+    monkeypatch.setattr(round_module, "_RoundBudget", SpyBudget)
+
+    play(
+        root,
+        [make_case("judged", judge=["tone"])],
+        Gateways(),
+        runs=1,
+        judge="batch",
+        batch_client=BatchStub(reply="not json at all"),
+    )
+
+    assert sum(settled) == JUDGE_CALL_COST * BATCH_PRICE_FACTOR
+
+
+# round id
+
+
+def test_it_should_give_two_rounds_started_in_the_same_second_distinct_ids(root):
+    same_second = {"round_id": None, "clock": lambda: START}
+    first = play(root, [make_case()], Gateways(), runs=1, **same_second)
+
+    second = play(root, [make_case()], Gateways(), runs=1, **same_second)
+
+    assert first.round_id != second.round_id
+    assert len(list(root.iterdir())) == 2
+
+
+# working tree state
+
+
+@pytest.fixture
+def repo(tmp_path, monkeypatch) -> Path:
+    path = tmp_path / "repo"
+    files = {
+        "src/pet_helper/mod.py": "x = 1\n",
+        "evals/cases/a.yaml": "id: a\n",
+        "evals/fixtures/f.yaml": "a: 1\n",
+        "kit/catalog.csv": "sku\n",
+        "pyproject.toml": "[project]\n",
+        "README.md": "readme\n",
+    }
+    for name, text in files.items():
+        (path / name).parent.mkdir(parents=True, exist_ok=True)
+        (path / name).write_text(text, encoding="utf-8")
+    identity = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath="]
+    for args in (["init", "-q"], ["add", "."], [*identity, "commit", "-qm", "init"]):
+        subprocess.run(  # noqa: S603
+            ["git", "-C", str(path), *args],  # noqa: S607
+            check=True,
+        )
+    monkeypatch.chdir(path)
+    return path
+
+
+def test_it_should_keep_the_state_clean_when_nothing_changed(repo):
+    assert current_git_state().dirty is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/pet_helper/mod.py",
+        "evals/cases/a.yaml",
+        "evals/fixtures/f.yaml",
+        "kit/catalog.csv",
+        "pyproject.toml",
+    ],
+)
+def test_it_should_mark_the_state_dirty_for_a_change_to_a_tracked_file(repo, path):
+    (repo / path).write_text("changed\n", encoding="utf-8")
+
+    assert current_git_state().dirty is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/pet_helper/new.py",
+        "evals/cases/new.yaml",
+        "evals/fixtures/new.yaml",
+        "kit/new.csv",
+    ],
+)
+def test_it_should_mark_the_state_dirty_for_an_untracked_file(repo, path):
+    (repo / path).write_text("new\n", encoding="utf-8")
+
+    assert current_git_state().dirty is True
+
+
+def test_it_should_ignore_a_change_outside_the_watched_paths(repo):
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+
+    assert current_git_state().dirty is False
+
+
+def test_it_should_mark_the_state_dirty_from_a_directory_below_the_repository_root(
+    repo, monkeypatch
+):
+    (repo / "kit/catalog.csv").write_text("changed\n", encoding="utf-8")
+    monkeypatch.chdir(repo / "src")
+
+    assert current_git_state().dirty is True
+
+
 # concurrency and environment
 
 
@@ -1152,6 +1604,7 @@ def snapshot_env(seen: dict[str, str | None]) -> Callable[[EvalCase, int], Any]:
     def factory(case: EvalCase, epoch: int) -> Any:
         seen[FALLBACK_ENV] = os.environ.get(FALLBACK_ENV)
         seen[CONTENT_ENV] = os.environ.get(CONTENT_ENV)
+        seen[FAILURE_ENV] = os.environ.get(FAILURE_ENV)
         return gateways(case, epoch)
 
     return factory
@@ -1173,6 +1626,25 @@ def test_it_should_turn_the_trace_content_on_for_the_round(root, monkeypatch):
     play(root, [make_case()], snapshot_env(seen), runs=1)
 
     assert seen[CONTENT_ENV] == "1"
+
+
+def test_it_should_clear_the_order_api_failure_switch_for_the_round(root, monkeypatch):
+    monkeypatch.setenv(FAILURE_ENV, "unavailable")
+    seen: dict[str, str | None] = {}
+
+    play(root, [make_case()], snapshot_env(seen), runs=1)
+
+    assert seen[FAILURE_ENV] is None
+
+
+def test_it_should_restore_the_order_api_failure_switch_after_the_round(
+    root, monkeypatch
+):
+    monkeypatch.setenv(FAILURE_ENV, "unavailable")
+
+    play(root, [make_case()], Gateways(), runs=1)
+
+    assert os.environ[FAILURE_ENV] == "unavailable"
 
 
 def test_it_should_restore_the_environment_the_caller_had(root, monkeypatch):
