@@ -31,3 +31,23 @@ O assistente LangGraph é síncrono. Chamado direto dentro da corrotina do solve
 ## Escolha do deptry
 
 Nenhum código em `src/` importa `inspect-ai` ainda, então o `deptry` acusa DEP002. A correção mínima é uma entrada `[tool.deptry.per_rule_ignores]` com `DEP002 = ["inspect-ai"]` e um comentário de uma linha: a US-008 passa a importar o pacote em `src/` e remove a entrada. Mover a dependência para o grupo `dev` foi descartado porque o harness de eval a usa em runtime.
+
+## Streaming do `langchain-anthropic` e do `langchain-ollama` (US-004)
+
+Caracterização em `tests/unit/test_gateway_streaming.py`, com `httpx.MockTransport` devolvendo SSE (Anthropic) e NDJSON (Ollama). Nada chama modelo real. Nenhum item de parada ficou vermelho, então o adaptador só liga `streaming=True` e o `invoke` atual segue valendo.
+
+| Comportamento | Resultado |
+| --- | --- |
+| `ChatAnthropic(streaming=True)` dispara `on_llm_new_token` por trecho de texto | confirmado |
+| A mensagem agregada mantém `response_metadata["stop_reason"]`, então `refused` e `truncated` continuam valendo | confirmado |
+| A mensagem agregada mantém `usage_metadata` com os campos de cache (`cache_creation`, `cache_read`) | confirmado |
+| Todos os blocos de raciocínio (thinking) ficam na mensagem agregada com a assinatura | confirmado |
+| O turno seguinte reenvia os blocos de raciocínio sem alteração | confirmado |
+| Os dois pontos de `cache_control` seguem iguais na requisição em streaming | confirmado |
+| `ChatOllama` dispara `on_llm_new_token` por trecho e agrega `usage_metadata` e `done_reason` | confirmado |
+
+## Armadilhas que o handler de trace trata
+
+- O uso de tokens só chega completo no `message_delta` final. Numa chamada cortada o handler não recebe a mensagem parcial (`on_llm_error` só traz a exceção), então ele soma o `usage_metadata` de cada `on_llm_new_token` e entrega essa soma ao `on_error`. `add_usage(None, None)` devolve zeros, não `None`: só se soma trecho que traz uso, senão uma chamada sem uso seria cobrada como custo zero.
+- O token da Anthropic é uma lista de blocos, não uma string. Só o bloco `type == "text"` com texto para o relógio do tempo até o primeiro trecho; trecho vazio ou só de raciocínio não conta. O Ollama manda string e termina com um trecho vazio.
+- O LangChain engole exceção de handler: sem `raise_error = True` o `BudgetExceeded` não impede a chamada ao modelo.

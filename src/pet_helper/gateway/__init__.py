@@ -1,5 +1,6 @@
-from pet_helper.gateway.anthropic import AnthropicGateway
+from pet_helper.gateway.anthropic import DEFAULT_MAX_TOKENS, AnthropicGateway
 from pet_helper.gateway.config import (
+    DEFAULT_ANTHROPIC_MODEL,
     FallbackMode,
     ProviderName,
     resolve_fallback,
@@ -26,6 +27,8 @@ def build_gateway() -> ModelGateway:
 
 
 __all__ = [
+    "DEFAULT_ANTHROPIC_MODEL",
+    "DEFAULT_MAX_TOKENS",
     "AnthropicGateway",
     "FakeGateway",
     "FakeScriptExhaustedError",

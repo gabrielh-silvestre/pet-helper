@@ -1,6 +1,8 @@
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import date
+from pathlib import Path
 from uuid import uuid4
 
 from pet_helper.conversation import KitError, build_assistant
@@ -33,7 +35,7 @@ def _report_escalation(cause: str | None) -> int:
 
 
 def _converse() -> int:
-    assistant = build_assistant()
+    assistant = build_assistant(trace_dir=Path("traces") / date.today().isoformat())
     session_id = uuid4().hex
     while True:
         try:

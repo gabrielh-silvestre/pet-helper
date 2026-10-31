@@ -16,7 +16,14 @@ from pet_helper.gateway import ModelGateway, build_gateway
 from pet_helper.guard import Guard, extract_cited_titles, normalize_source_title
 from pet_helper.knowledge import PolicyHit, PolicyIndex
 from pet_helper.orders import Clock, MockOrderApi, OrderService
-from pet_helper.trace import NullTracer, TracerPort, emit, turn_scope
+from pet_helper.trace import (
+    NullTracer,
+    TraceCallbackHandler,
+    Tracer,
+    TracerPort,
+    emit,
+    turn_scope,
+)
 
 KIT_DIR_ENV = "PET_HELPER_KIT_DIR"
 DEFAULT_KIT_DIR = "kit"
@@ -88,6 +95,7 @@ class Assistant:
         config: RunnableConfig = {
             "configurable": {"thread_id": session_id},
             "recursion_limit": RECURSION_LIMIT,
+            "callbacks": [TraceCallbackHandler()],
         }
         try:
             state = self._graph.invoke({"user_text": text}, config)
@@ -148,6 +156,7 @@ def build_assistant(
     tracer: TracerPort | None = None,
     kit_dir: Path | None = None,
     today: date | None = None,
+    trace_dir: Path | None = None,
 ) -> Assistant:
     policies, catalog, orders = _load_kit(_resolve_kit_dir(kit_dir), today)
     selected_gateway = gateway if gateway is not None else build_gateway()
@@ -156,4 +165,10 @@ def build_assistant(
         if registry is not None
         else build_tool_registry(policies=policies, catalog=catalog, orders=orders)
     )
-    return Assistant(selected_gateway, Guard(catalog), selected_registry, tracer)
+    guard = Guard(catalog)
+    selected_tracer = (
+        Tracer(trace_dir, mask=guard.mask)
+        if tracer is None and trace_dir is not None
+        else tracer
+    )
+    return Assistant(selected_gateway, guard, selected_registry, selected_tracer)

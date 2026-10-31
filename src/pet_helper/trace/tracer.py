@@ -13,7 +13,12 @@ CONTENT_ENV = "PET_HELPER_TRACE_CONTENT"
 MAX_FIELD_CHARS = 10_000
 
 _FREE_TEXT_FIELDS = frozenset(
-    {"gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.retrieval.query.text"}
+    {
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.retrieval.query.text",
+        "gen_ai.tool.call.arguments",
+    }
 )
 # opaque ids from the runtime: masking could mangle a digit run that looks like a phone
 _SPAN_ID_FIELDS = ("span_id", "parent_span_id")

@@ -21,6 +21,10 @@ O provedor do modelo vem de três variáveis:
 
 Se a conversa terminar com a causa `model_unavailable`, o provedor não respondeu: confira as variáveis acima e rode o comando de novo.
 
+## Rastros da conversa
+
+O `pet-helper chat` grava um rastro em `traces/AAAA-MM-DD/<session_id>.jsonl`, relativo ao diretório de trabalho: um evento por turno, chamada ao modelo e chamada de ferramenta. O conteúdo sai mascarado (CPF, telefone e e-mail). Com `PET_HELPER_TRACE_CONTENT=0`, os campos de texto livre gravam só o tamanho.
+
 ## Setup sem chave (Ollama)
 
 Para avaliar sem chave de API paga, o Docker Compose sobe o Ollama (`ollama/ollama:0.40.12`), baixa o modelo configurado (padrão `llama3.1:8b`) antes de iniciar o app e abre o chat no terminal:
