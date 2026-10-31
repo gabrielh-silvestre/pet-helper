@@ -10,6 +10,7 @@ from pet_helper.evals.budget import (
     RoundBudget,
     batch_reserve_usd,
 )
+from pet_helper.evals.judge import JUDGE_MAX_TOKENS
 from pet_helper.gateway.anthropic import DEFAULT_MAX_TOKENS
 from pet_helper.trace import UnknownPriceError, cost_usd
 
@@ -17,8 +18,7 @@ RESERVE = Decimal("0.005")
 THREADS = 8
 # the assistant prompt, tools and history stay under this many input tokens
 ASSISTANT_INPUT_LIMIT_TOKENS = 10_000
-# the judge's explicit max_tokens (US-7) and the input of its slice
-JUDGE_MAX_TOKENS = 4096
+# the input of the judge's slice
 JUDGE_INPUT_LIMIT_TOKENS = 10_000
 
 
