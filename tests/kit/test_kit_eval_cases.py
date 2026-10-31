@@ -2,7 +2,9 @@ import re
 from collections import Counter
 
 import pytest
+import yaml
 
+from pet_helper.evals import cases as eval_cases
 from pet_helper.evals.cases import load_cases
 from pet_helper.orders.api import FAILURE_503_ORDER, FAILURE_TIMEOUT_ORDER
 from pet_helper.orders.cpf import normalize_cpf
@@ -24,6 +26,7 @@ CHECK_TYPES = {
     "must_include",
     "must_not_include",
     "expected_value",
+    "state",
 }
 # terms the must_not_include of a case must forbid, folded like OUTCOME_TERMS
 VERDICT_GUARDS = {
@@ -83,6 +86,16 @@ def check_values(case, *types):
         raw = check.value
         values.extend(raw if isinstance(raw, list) else [] if raw is None else [raw])
     return values
+
+
+def expected_docs(case):
+    doc = case.expected_doc
+    return doc if isinstance(doc, list) else [] if doc is None else [doc]
+
+
+def criterion_name(entry):
+    """A judge entry is a criterion name or a {criterion, turn} mapping."""
+    return getattr(entry, "criterion", entry)
 
 
 def last_cited(pattern, case):
@@ -234,7 +247,7 @@ def test_it_should_use_only_known_judge_criteria(cases):
     unknown = {
         (case.id, criterion)
         for case in cases
-        for criterion in case.judge
+        for criterion in map(criterion_name, case.judge)
         if criterion not in JUDGE_CRITERIA
     }
 
@@ -307,12 +320,12 @@ def test_it_should_tag_every_case_with_an_expected_doc_as_source_citation(cases)
 
 
 def test_it_should_cite_an_invented_policy_in_at_least_one_case(cases):
-    assert INVENTED_POLICIES & {case.expected_doc for case in cases}
+    assert INVENTED_POLICIES & {doc for case in cases for doc in expected_docs(case)}
 
 
 @pytest.mark.parametrize("policy", sorted(INVENTED_POLICIES))
 def test_it_should_point_a_case_at_each_invented_policy(cases, policy):
-    assert policy in {case.expected_doc for case in cases}
+    assert policy in {doc for case in cases for doc in expected_docs(case)}
 
 
 def test_it_should_cover_the_strict_149_limit_in_the_south_with_ped_10002(cases):
@@ -490,13 +503,14 @@ def test_it_should_keep_every_absent_ref_out_of_the_kit(cases, kit_refs):
 
 
 def test_it_should_point_every_expected_doc_to_a_kit_policy(cases, policy_names):
-    missing = [
-        case.id
+    missing = {
+        (case.id, doc)
         for case in cases
-        if case.expected_doc and case.expected_doc not in policy_names
-    ]
+        for doc in expected_docs(case)
+        if doc not in policy_names
+    }
 
-    assert missing == []
+    assert missing == set()
 
 
 def test_it_should_point_every_cites_source_check_to_a_kit_policy(cases, policy_names):
@@ -606,6 +620,17 @@ def test_it_should_give_every_multi_turn_case_more_than_one_turn(cases):
     ]
 
     assert single == []
+
+
+def test_it_should_pass_the_structure_validation_for_every_case(cases_dir):
+    errors = {
+        path.name: eval_cases.validate_structure(
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        )
+        for path in sorted(cases_dir.glob("*.yaml"))
+    }
+
+    assert {name: found for name, found in errors.items() if found} == {}
 
 
 def test_it_should_record_the_eval_cases_prompt_section_in_prompts(kit_dir):

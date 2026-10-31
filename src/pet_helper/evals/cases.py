@@ -1,8 +1,49 @@
+from collections.abc import Mapping
 from datetime import date
+from functools import cache
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict
+
+CHECK_TYPES = frozenset(
+    {
+        "cites_source",
+        "skus_exist",
+        "mentions_order",
+        "no_other_customer_data",
+        "tool_called",
+        "tool_not_called",
+        "escalated",
+        "must_include",
+        "must_not_include",
+        "expected_value",
+        "state",
+    }
+)
+# these look at the whole conversation, so a turn makes no sense on them
+TURNLESS_CHECK_TYPES = frozenset(
+    {
+        "skus_exist",
+        "no_other_customer_data",
+        "tool_called",
+        "tool_not_called",
+        "escalated",
+        "state",
+    }
+)
+# snapshot() values a case may assert on; US-6 checks this list against kit/KIT.md
+PUBLIC_STATE_KEYS = frozenset(
+    {
+        "session_cpf",
+        "cpf_conflict",
+        "escalation",
+        "escalation_cause",
+        "ended",
+        "injection_suspected",
+    }
+)
 
 
 class Check(BaseModel):
@@ -10,6 +51,14 @@ class Check(BaseModel):
 
     type: str
     value: str | list[str] | None = None
+    turn: int | None = None
+    args: dict | None = None
+    key: str | None = None
+
+
+class JudgeEntry(BaseModel):
+    criterion: str
+    turn: int | None = None
 
 
 class EvalCase(BaseModel):
@@ -21,11 +70,13 @@ class EvalCase(BaseModel):
     today: date
     turns: list[str]
     checks: list[Check] = []
-    expected_doc: str | None = None
-    judge: list[str] = []
+    expected_doc: str | list[str] | None = None
+    judge: list[str | JudgeEntry] = []
     behaviors: list[str] = []
     expected_outcome: str | None = None
     absent_refs: list[str] = []
+    fixture: str | None = None
+    reference: dict | None = None
 
 
 def load_cases(directory: Path) -> list[EvalCase]:
@@ -33,6 +84,66 @@ def load_cases(directory: Path) -> list[EvalCase]:
         EvalCase.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
         for path in sorted([*directory.glob("*.yaml"), *directory.glob("*.yml")])
     ]
+
+
+@cache
+def _tool_params() -> dict[str, frozenset[str]]:
+    # imported here so the cases module stays light; the tools only close over
+    # their collaborators, so none is needed to read their signatures
+    from pet_helper.conversation import build_tool_registry
+
+    registry = build_tool_registry(
+        policies=cast(Any, None), catalog=cast(Any, None), orders=cast(Any, None)
+    )
+    return {tool.name: frozenset(tool.args) for tool in registry.tools}
+
+
+def _is_valid_today(today: Any) -> bool:
+    if isinstance(today, date):
+        return True
+    try:
+        date.fromisoformat(today)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _check_errors(check: Mapping[str, Any]) -> list[str]:
+    check_type = check.get("type")
+    errors = []
+    if not set(check) <= set(Check.model_fields):
+        errors.append("unknown_key")
+    if check_type not in CHECK_TYPES:
+        errors.append("unknown_check_type")
+    if check_type in TURNLESS_CHECK_TYPES and check.get("turn") is not None:
+        errors.append("turn_not_allowed")
+    if check_type == "state" and check.get("key") not in PUBLIC_STATE_KEYS:
+        errors.append("state_key_not_public")
+    if check_type in {"tool_called", "tool_not_called"}:
+        params = _tool_params().get(str(check.get("value")))
+        if params is None:
+            errors.append("unknown_tool")
+        elif not set(check.get("args") or ()) <= params:
+            errors.append("unknown_tool_arg")
+    return errors
+
+
+def validate_structure(raw: Mapping[str, Any]) -> list[str]:
+    errors = []
+    if not set(raw) <= set(EvalCase.model_fields):
+        errors.append("unknown_key")
+    if not raw.get("turns"):
+        errors.append("empty_turns")
+    if not _is_valid_today(raw.get("today")):
+        errors.append("bad_today")
+    for entry in raw.get("judge") or []:
+        if isinstance(entry, Mapping) and not set(entry) <= set(
+            JudgeEntry.model_fields
+        ):
+            errors.append("unknown_key")
+    for check in raw.get("checks") or []:
+        errors.extend(_check_errors(check))
+    return list(dict.fromkeys(errors))
 
 
 def to_sample_kwargs(case: EvalCase) -> dict:
@@ -45,9 +156,14 @@ def to_sample_kwargs(case: EvalCase) -> dict:
             "today": case.today.isoformat(),
             "checks": [check.model_dump(exclude_none=True) for check in case.checks],
             "expected_doc": case.expected_doc,
-            "judge": case.judge,
+            "judge": [
+                entry if isinstance(entry, str) else entry.model_dump(exclude_none=True)
+                for entry in case.judge
+            ],
             "behaviors": case.behaviors,
             "expected_outcome": case.expected_outcome,
             "absent_refs": case.absent_refs,
+            "fixture": case.fixture,
+            "reference": case.reference,
         },
     }
