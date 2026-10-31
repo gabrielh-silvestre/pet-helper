@@ -6,6 +6,7 @@ dependencies = [
     "anthropic>=2.3.0",
     "bm25s>=0.3.16",
     "httpx>=0.28.1",
+    "inspect-ai==0.3.286",
     "langchain-anthropic>=1.7.7",
     "langchain-core>=1.7.1",
     "langchain-ollama>=1.1.0",
@@ -86,3 +87,7 @@ schema_pattern = '(feat|fix|chore|docs|test|refactor)(\([a-z0-9-]+\))?!?: \S[^\n
 [tool.deptry]
 # the installed project is its own distribution; without this deptry reports it as a transitive dependency
 known_first_party = ["pet_helper"]
+
+[tool.deptry.per_rule_ignores]
+# US-008 imports inspect-ai from src/; drop this entry then
+DEP002 = ["inspect-ai"]
