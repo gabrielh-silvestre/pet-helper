@@ -46,7 +46,10 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 
 - A unit of work starts with `/pre-code <objective>`: three macro skills chain the phases (M1 `/pre-code`: interview, plan, owner seat, owner approval; M2 `/deliver <slug>`: ralph, local review, draft PR; M3 `/pr-panel <slug> <PR> <mode>`: PR review in a fresh Herdr tab, fixes, automatic verdict). Each macro resumes a stopped unit when called with its slug. Unit state and the guards the hooks enforce live in `.claude/hooks/flow.sh`; tests in `tests/harness/test_flow.py`.
 - Existing tools before custom code: every interview and plan runs a research step on existing libraries, targeted (what the libraries already chosen in `docs/architecture.md` ship) or broad (a capability with no chosen library); the agent picks which and says why. Every piece built from scratch names in the plan the existing tool considered and why it does not fit.
-- TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them.
+- TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them. Both run as Claude subagents (`sonnet`).
+<!-- Paused on 2026-10-30 (agy quota exhausted; owner chose Claude subagents only). To re-enable, replace the bullet above with:
+- TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them. In the `/deliver` TDD loop both run on `agy` (Gemini 4 Argon High) through `omc ask antigravity`, outside the agent hooks, so the main session runs those checks after each call.
+-->
 - Nothing that calls the real model runs automatically (no git hook, CI or schedule). Eval rounds are manual, show a cost estimate first and stop at US$5.
 - Commit directly on `main` while the work is docs and setup; once code delivery starts, one branch and one `wt` worktree per unit, a PR, and only the owner merges.
 - Commits: Conventional Commits, subject only, up to 80 characters.
