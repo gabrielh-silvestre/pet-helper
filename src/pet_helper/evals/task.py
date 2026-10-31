@@ -190,6 +190,16 @@ def _policy_titles(messages: Sequence[BaseMessage]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(hit.title for hit in hits))
 
 
+def _masked(guard: Guard, value: Any) -> Any:
+    if isinstance(value, str):
+        return guard.mask(value)
+    if isinstance(value, list):
+        return [_masked(guard, item) for item in value]
+    if isinstance(value, dict):
+        return {key: _masked(guard, item) for key, item in value.items()}
+    return value
+
+
 def make_executor(max_samples: int, judge_slots: int) -> ThreadPoolExecutor:
     return ThreadPoolExecutor(
         max_workers=max_samples + judge_slots, thread_name_prefix="eval"
@@ -354,6 +364,9 @@ def eval_task(
             {**message, "content": guard.mask(message["content"])}
             for message in kwargs["input"]
         ]
+        metadata = kwargs["metadata"]
+        for key in ("checks", "reference"):
+            metadata[key] = _masked(guard, metadata[key])
         samples.append(Sample(**kwargs))
     return Task(
         dataset=samples,

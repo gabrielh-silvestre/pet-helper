@@ -23,7 +23,7 @@ from pet_helper.evals.budget import (
     JUDGE_MAX_TOKENS,
     batch_reserve_usd,
 )
-from pet_helper.evals.cases import EvalCase
+from pet_helper.evals.cases import EvalCase, load_cases
 from pet_helper.evals.judge import (
     DEFAULT_JUDGE_MODEL,
     BatchCollection,
@@ -41,9 +41,10 @@ from pet_helper.evals.round import (
 )
 from pet_helper.gateway import DEFAULT_ANTHROPIC_MODEL, AnthropicGateway, FakeGateway
 from pet_helper.gateway.config import FALLBACK_ENV
-from pet_helper.trace import cost_usd
+from pet_helper.trace import cost_usd, find_raw_pii
 from pet_helper.trace.tracer import CONTENT_ENV
 from tests.unit.test_eval_task import (
+    CASES_DIR,
     JUDGE_USAGE,
     KIT,
     AnthropicStub,
@@ -872,6 +873,22 @@ def test_it_should_stamp_the_round_with_the_clock(root):
 def test_it_should_record_a_clean_pii_check_for_a_masked_round(root):
     play(root, [make_case()], Gateways(), runs=1)
 
+    assert read_json(root)["pii_check"] == "pass"
+
+
+def test_it_should_leave_no_raw_personal_data_in_the_round_of_the_visible_cases(root):
+    cases = load_cases(CASES_DIR)
+
+    play(
+        root,
+        cases,
+        lambda case, epoch: FakeGateway(
+            ["Não posso ajudar com isso."] * len(case.turns)
+        ),
+        runs=1,
+    )
+
+    assert find_raw_pii(root / "round-1") == []
     assert read_json(root)["pii_check"] == "pass"
 
 

@@ -324,8 +324,38 @@ def trace_events(round_dir: Path, session_id: str) -> list[dict]:
 # task configuration
 
 
+def masked_metadata(case: EvalCase) -> dict[str, Any]:
+    """The case metadata with every string inside checks and reference masked by the Guard."""
+    mask = Guard(Catalog(KIT / "catalog.csv")).mask
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return mask(value)
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, dict):
+            return {key: walk(item) for key, item in value.items()}
+        return value
+
+    metadata = to_sample_kwargs(case)["metadata"]
+    return {
+        **metadata,
+        "checks": walk(metadata["checks"]),
+        "reference": walk(metadata["reference"]),
+    }
+
+
 def test_it_should_build_one_sample_per_case_from_the_sample_kwargs(round_dir):
-    case = make_case("policy-case", checks=[{"type": "must_include", "value": "7"}])
+    case = make_case(
+        "policy-case",
+        checks=[
+            {
+                "type": "no_other_customer_data",
+                "value": ["zuleica@clientes.example.com"],
+            }
+        ],
+        reference={"replies": [{"text": "Escreva para zuleica@clientes.example.com"}]},
+    )
 
     task = eval_task(
         [case],
@@ -338,7 +368,7 @@ def test_it_should_build_one_sample_per_case_from_the_sample_kwargs(round_dir):
 
     [sample] = list(task.dataset)
     assert sample.id == "policy-case"
-    assert sample.metadata == to_sample_kwargs(case)["metadata"]
+    assert sample.metadata == masked_metadata(case)
 
 
 def test_it_should_run_three_epochs_reduced_by_at_least_3_by_default(round_dir):

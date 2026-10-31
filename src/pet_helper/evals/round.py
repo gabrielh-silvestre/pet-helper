@@ -57,7 +57,7 @@ from pet_helper.gateway import (
     resolve_anthropic_model,
     resolve_ollama_model,
 )
-from pet_helper.trace import CONTENT_ENV, find_raw_pii
+from pet_helper.trace import CONTENT_ENV, UnknownPriceError, find_raw_pii
 
 KIT_DIR = Path(DEFAULT_KIT_DIR)
 DEFAULT_RUNS = 3
@@ -202,6 +202,7 @@ class _RoundBudget(RoundBudget):
         super().__init__(cap)
         self.cap = cap
         self.halted = False
+        self.price_unknown = False
 
     def before_call(self, reserve: Decimal) -> None:
         if self.halted:
@@ -212,6 +213,10 @@ class _RoundBudget(RoundBudget):
         if usage is None:
             self.halted = True
         super().on_error(usage)
+
+    def on_unknown_price(self) -> None:
+        self.halted = True
+        self.price_unknown = True
 
 
 def utc_now() -> datetime:
@@ -502,7 +507,7 @@ def _stop(
     budget: _RoundBudget, collected: _Collected, capped: bool, directory: Path
 ) -> tuple[str | None, str | None]:
     if budget.halted:
-        if collected.price_unknown:
+        if collected.price_unknown or budget.price_unknown:
             reason, line = (
                 "unknown_price",
                 "Round stopped: a model call has no known price",
@@ -539,13 +544,16 @@ def _judge_sync(
     items: Sequence[tuple[Judged, JudgeEntry]],
     client: JudgeClient,
     log_path: Path,
-    budget: RoundBudget,
+    budget: _RoundBudget,
 ) -> bool:
     def judge_one(item: tuple[Judged, JudgeEntry]) -> bool:
         judged, entry = item
         try:
             judge_charged(entry, judged, client, log_path, budget)
         except BudgetExceeded:
+            return False
+        except UnknownPriceError:
+            budget.on_unknown_price()
             return False
         except JudgeReplyError:
             # the run stays without a verdict, so it stays pending
@@ -567,7 +575,7 @@ def _settle_batch(
     batch_id: str,
     ids: Mapping[str, tuple[Judged, JudgeEntry]],
     log_path: Path,
-    budget: RoundBudget,
+    budget: _RoundBudget,
     wait_seconds: float,
     poll_seconds: float,
 ) -> bool:
@@ -587,11 +595,14 @@ def _settle_batch(
             verdict = verdict_from_reply(text, usage, client.model)
         except JudgeReplyError:
             continue
+        except UnknownPriceError:
+            budget.on_unknown_price()
+            break
         verdict = replace(verdict, cost_usd=verdict.cost_usd * BATCH_PRICE_FACTOR)
         append_verdict(log_path, judged.run_id, entry.criterion, verdict)
         cost += verdict.cost_usd
     budget.on_cost(cost)
-    return True
+    return not budget.price_unknown
 
 
 def _judge_batch(

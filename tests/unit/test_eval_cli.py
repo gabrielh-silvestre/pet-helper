@@ -44,6 +44,9 @@ class WatchedBatch(BatchStub):
         return super().collect(batch_id, item_ids)
 
 
+UNPRICED_MODEL = "claude-mystery-9"
+
+
 # helpers
 
 
@@ -615,6 +618,43 @@ def test_it_should_stop_a_rejudge_at_the_cap(
     assert "cap" in "\n".join(output_lines(capsys))
 
 
+def test_it_should_end_a_rejudge_with_one_line_when_the_judge_model_has_no_price(
+    monkeypatch, env, pending_round, capsys
+):
+    unpriced = JudgeStub()
+    unpriced.model = UNPRICED_MODEL
+    capsys.readouterr()
+
+    code = eval_cli(
+        monkeypatch,
+        replace(env, judge_client=unpriced),
+        "--rejudge",
+        pending_round.name,
+    )
+
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert code not in (0, None)
+    assert len(errors) == 1
+    assert "price" in errors[0]
+
+
+def test_it_should_keep_the_rejudged_round_pending_when_the_judge_model_has_no_price(
+    monkeypatch, env, pending_round
+):
+    unpriced = JudgeStub()
+    unpriced.model = UNPRICED_MODEL
+
+    eval_cli(
+        monkeypatch,
+        replace(env, judge_client=unpriced),
+        "--rejudge",
+        pending_round.name,
+    )
+
+    assert read_info(pending_round)["judge_pending"] is True
+    assert [row["case_id"] for row in read_rows(pending_round)] == ["judged"]
+
+
 def test_it_should_refuse_a_held_out_rejudge_without_the_gate(
     monkeypatch, env, judge, capsys
 ):
@@ -727,6 +767,45 @@ def test_it_should_append_the_collected_verdicts_and_complete_the_round(
         ("judged-e3", "tone"),
     }
     assert read_info(pending_batch)["judge_pending"] is False
+
+
+def test_it_should_end_a_collect_with_one_line_when_the_judge_model_has_no_price(
+    monkeypatch, env, pending_batch, capsys
+):
+    unpriced = WatchedBatch(ready_after=1)
+    unpriced.model = UNPRICED_MODEL
+    capsys.readouterr()
+
+    code = eval_cli(
+        monkeypatch,
+        replace(env, batch_client=unpriced),
+        "--collect",
+        pending_batch.name,
+        answers=[],
+    )
+
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert code not in (0, None)
+    assert len(errors) == 1
+    assert "price" in errors[0]
+
+
+def test_it_should_keep_the_batch_pending_when_the_judge_model_has_no_price(
+    monkeypatch, env, pending_batch
+):
+    unpriced = WatchedBatch(ready_after=1)
+    unpriced.model = UNPRICED_MODEL
+
+    eval_cli(
+        monkeypatch,
+        replace(env, batch_client=unpriced),
+        "--collect",
+        pending_batch.name,
+        answers=[],
+    )
+
+    info = read_info(pending_batch)
+    assert (info["batch_id"], info["judge_pending"]) == ("batch-1", True)
 
 
 @pytest.mark.parametrize("argv", [["--judge", "batch"], ["--collect", "any-round"]])
