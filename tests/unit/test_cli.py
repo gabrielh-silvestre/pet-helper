@@ -565,3 +565,103 @@ def test_it_should_write_only_lengths_when_trace_content_is_off(monkeypatch, tmp
     )
 
     assert turn_start["gen_ai.input.messages"] == len("Como devolvo uma ração?")
+
+
+def _metrics_event(kind, **fields):
+    return {
+        "ts": "2026-10-31T12:00:00+00:00",
+        "session_id": "s1",
+        "turn": 1,
+        "event": kind,
+        "trace_id": "s1:1",
+        **fields,
+    }
+
+
+def _write_metrics_trace(directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    model_call = _metrics_event(
+        "model.call",
+        **{
+            "gen_ai.provider.name": "anthropic",
+            "gen_ai.request.model": "claude-haiku-5-5",
+            "gen_ai.response.time_to_first_chunk": 0.25,
+            "duration_ms": 1300.0,
+            "gen_ai.usage.input_tokens": 100,
+            "gen_ai.usage.output_tokens": 10,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+            "pet_helper.fallback": False,
+            "pet_helper.cost_usd": 0.001,
+        },
+    )
+    (directory / "s1.jsonl").write_text(json.dumps(model_call) + "\n", encoding="utf-8")
+
+
+def _forbid_gateways(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("metrics must not construct a gateway")
+
+    _patch_build_assistant(monkeypatch, refuse)
+    monkeypatch.setattr(AnthropicGateway, "__init__", refuse)
+    monkeypatch.setattr(OllamaGateway, "__init__", refuse)
+
+
+def test_it_should_exit_with_zero_after_printing_the_metrics(tmp_path):
+    _write_metrics_trace(tmp_path / "traces")
+
+    assert main(["metrics", str(tmp_path / "traces")]) == 0
+
+
+def test_it_should_print_the_model_row_of_the_metrics_table(tmp_path, capsys):
+    _write_metrics_trace(tmp_path / "traces")
+
+    main(["metrics", str(tmp_path / "traces")])
+
+    assert "claude-haiku-5-5" in capsys.readouterr().out
+
+
+def test_it_should_print_the_time_to_first_chunk_in_milliseconds(tmp_path, capsys):
+    _write_metrics_trace(tmp_path / "traces")
+
+    main(["metrics", str(tmp_path / "traces")])
+
+    assert "250" in capsys.readouterr().out
+
+
+def test_it_should_not_construct_a_gateway_when_printing_metrics(monkeypatch, tmp_path):
+    _write_metrics_trace(tmp_path / "traces")
+    _forbid_gateways(monkeypatch)
+
+    assert main(["metrics", str(tmp_path / "traces")]) == 0
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_metrics_directory_is_missing(
+    tmp_path, capsys
+):
+    missing = tmp_path / "missing-traces"
+
+    code = main(["metrics", str(missing)])
+
+    captured = capsys.readouterr()
+    non_empty_lines = [
+        line for line in f"{captured.out}{captured.err}".splitlines() if line.strip()
+    ]
+    assert (code, len(non_empty_lines)) == (1, 1)
+    assert str(missing) in non_empty_lines[0]
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_metrics_directory_is_empty(
+    tmp_path, capsys
+):
+    empty = tmp_path / "empty-traces"
+    empty.mkdir()
+
+    code = main(["metrics", str(empty)])
+
+    captured = capsys.readouterr()
+    non_empty_lines = [
+        line for line in f"{captured.out}{captured.err}".splitlines() if line.strip()
+    ]
+    assert (code, len(non_empty_lines)) == (1, 1)
+    assert str(empty) in non_empty_lines[0]
