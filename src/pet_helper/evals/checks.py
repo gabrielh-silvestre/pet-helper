@@ -174,7 +174,7 @@ def evaluate_case(
     case: EvalCase, record: RunRecord, known_skus: Collection[str] = ()
 ) -> CaseResult:
     failed = [
-        check.type
+        f"{check.type}@{check.turn}" if check.turn else check.type
         for check in case.checks
         if not check_passes(check, record, known_skus)
     ]

@@ -1,6 +1,7 @@
 from pet_helper.conversation.prompt import (
     system_prompt_sha256 as system_prompt_sha256,
 )
+from pet_helper.conversation.service import DEFAULT_KIT_DIR as DEFAULT_KIT_DIR
 from pet_helper.conversation.service import (
     Assistant,
     KitError,

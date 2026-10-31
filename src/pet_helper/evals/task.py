@@ -23,7 +23,7 @@ from inspect_ai.scorer import (
     scorer,
 )
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from pet_helper.catalog import Catalog
 from pet_helper.conversation import ToolRegistry, build_assistant, build_kit_registry
@@ -47,6 +47,7 @@ from pet_helper.evals.judge import (
 )
 from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard
+from pet_helper.knowledge import PolicyHit
 from pet_helper.trace import BudgetExceeded, TraceCallbackHandler, Tracer
 
 GatewayFactory = Callable[[EvalCase, int], ModelGateway]
@@ -98,8 +99,15 @@ class _Conductor:
                     tracer=self.tracer,
                     handler_factory=self.handler_factory,
                 )
-            replies = [assistant.turn(session_id, text) for text in case.turns]
-            snapshot = assistant.snapshot(session_id)
+            replies = []
+            policy_titles = []
+            seen = 0
+            for text in case.turns:
+                replies.append(assistant.turn(session_id, text))
+                snapshot = assistant.snapshot(session_id)
+                # the history is cumulative: the messages after the last turn are this turn's
+                policy_titles.append(_policy_titles(snapshot["messages"][seen:]))
+                seen = len(snapshot["messages"])
             known_skus = Catalog(kit_dir / "catalog.csv").skus
         # the graph turns an unavailable model into a handoff, which is not a result
         if snapshot.get("escalation_cause") == "model_unavailable":
@@ -118,8 +126,8 @@ class _Conductor:
         return _Conversation(
             record,
             known_skus,
-            self._masked_transcript(case, record),
-            self._masked_record(record),
+            self._masked_transcript(case, record, policy_titles),
+            self._masked_record(record, policy_titles),
         )
 
     def _masked(self, values: Mapping[str, Any]) -> dict[str, Any]:
@@ -128,7 +136,9 @@ class _Conductor:
             for name, value in values.items()
         }
 
-    def _masked_record(self, record: RunRecord) -> dict[str, Any]:
+    def _masked_record(
+        self, record: RunRecord, policy_titles: Sequence[tuple[str, ...]]
+    ) -> dict[str, Any]:
         return {
             "replies": [
                 {
@@ -145,20 +155,39 @@ class _Conductor:
             "retrieved": [
                 {"source": hit.source, "title": hit.title} for hit in record.retrieved
             ],
+            "policy_titles": [list(titles) for titles in policy_titles],
             "state": self._masked(record.state),
         }
 
-    def _masked_transcript(self, case: EvalCase, record: RunRecord) -> Transcript:
-        titles = tuple(hit.title for hit in record.retrieved)
+    def _masked_transcript(
+        self,
+        case: EvalCase,
+        record: RunRecord,
+        policy_titles: Sequence[tuple[str, ...]],
+    ) -> Transcript:
         return Transcript(
             turns=[
                 TranscriptTurn(
                     self.guard.mask(user), self.guard.mask(reply.text), titles
                 )
-                for user, reply in zip(case.turns, record.replies, strict=True)
+                for user, reply, titles in zip(
+                    case.turns, record.replies, policy_titles, strict=True
+                )
             ],
             escalation=record.replies[-1].escalation,
         )
+
+
+def _policy_titles(messages: Sequence[BaseMessage]) -> tuple[str, ...]:
+    # the state's `retrieved` is deduplicated by source, so it cannot tell a policy found again
+    hits = (
+        hit
+        for message in messages
+        if isinstance(message, ToolMessage) and isinstance(message.artifact, list)
+        for hit in message.artifact
+        if isinstance(hit, PolicyHit)
+    )
+    return tuple(dict.fromkeys(hit.title for hit in hits))
 
 
 def make_executor(max_samples: int, judge_slots: int) -> ThreadPoolExecutor:
@@ -226,6 +255,7 @@ def eval_task(
     runs: int = 3,
     judge_client: JudgeClient | None = None,
     budget: RoundBudget,
+    epoch_offset: int = 0,
 ) -> Task:
     guard = Guard(Catalog(kit_dir / "catalog.csv"))
     conductor = _Conductor(
@@ -248,8 +278,12 @@ def eval_task(
     # once the round cap refuses a call, the samples still waiting must not start
     stop = threading.Event()
 
+    def epoch_of(state: TaskState) -> int:
+        # a retry eval of the same round continues the epoch numbering of the first
+        return state.epoch + epoch_offset
+
     def session_of(state: TaskState) -> str:
-        return f"{state.sample_id}-e{state.epoch}"
+        return f"{state.sample_id}-e{epoch_of(state)}"
 
     @solver
     def conversation_solver() -> Solver:
@@ -260,7 +294,7 @@ def eval_task(
                 return state
             try:
                 conversation = await asyncio.get_running_loop().run_in_executor(
-                    executor, conductor.converse, case, state.epoch
+                    executor, conductor.converse, case, epoch_of(state)
                 )
             except BudgetExceeded:
                 stop.set()
@@ -327,6 +361,7 @@ def eval_task(
         scorer=case_scorer(),
         epochs=Epochs(runs, f"at_least_{runs}"),
         fail_on_error=False,
+        metadata={"epoch_offset": epoch_offset},
     )
 
 

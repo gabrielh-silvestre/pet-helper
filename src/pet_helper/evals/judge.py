@@ -119,7 +119,10 @@ class Verdict:
 
 
 class JudgeReplyError(ValueError):
-    pass
+    def __init__(self, message: str, cost: Decimal | None = None):
+        super().__init__(message)
+        # what the unparsable reply cost: the call did bill its tokens
+        self.cost = cost
 
 
 @dataclass(frozen=True)
@@ -236,16 +239,19 @@ def build_slice(criterion: str, transcript: Transcript, turn: int | None = None)
 
 
 def verdict_from_reply(text: str, usage: Mapping[str, Any], model: str) -> Verdict:
+    billed = cost_usd("anthropic", model, usage)
     try:
         reply = json.loads(text)
     except json.JSONDecodeError as error:
-        raise JudgeReplyError("the judge reply is not JSON") from error
+        raise JudgeReplyError("the judge reply is not JSON", billed) from error
     if (
         not isinstance(reply, dict)
         or not isinstance(reply.get("critique"), str)
         or reply.get("verdict") not in VERDICTS
     ):
-        raise JudgeReplyError("the judge reply lacks a critique or a valid verdict")
+        raise JudgeReplyError(
+            "the judge reply lacks a critique or a valid verdict", billed
+        )
     return Verdict(
         critique=reply["critique"],
         verdict=reply["verdict"],
@@ -432,6 +438,13 @@ def _reserve_call_settle(
     budget.before_call(reserve)
     try:
         verdict = call()
+    except JudgeReplyError as error:
+        # the reply came back and was billed: only a call without usage leaves the cost unknown
+        if error.cost is None:
+            budget.on_error(None)
+        else:
+            budget.on_cost(error.cost * cost_factor)
+        raise
     except BaseException:
         budget.on_error(None)
         raise

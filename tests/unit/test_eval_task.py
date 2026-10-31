@@ -722,6 +722,58 @@ def test_it_should_show_the_judge_the_reply_of_the_assistant(round_dir):
     assert "Olá! Como posso ajudar hoje?" in judge.calls[0][1]
 
 
+def test_it_should_show_the_dont_know_judge_only_the_policies_retrieved_in_its_turn(
+    round_dir,
+):
+    case = make_case(
+        "two-turns",
+        ("Qual o prazo de devolução?", "E o prazo de entrega?"),
+        judge=[{"criterion": "dont_know_accuracy", "turn": 2}],
+    )
+    gateways = Gateways(
+        {
+            "two-turns": [
+                call("search_policies", {"query": "devolução de ração"}),
+                POLICY_REPLY,
+                "Não sei informar.",
+            ]
+        }
+    )
+    judge = JudgeStub()
+
+    run_round(round_dir, [case], gateways, runs=1, judge=judge)
+
+    [(_, slice_)] = judge.calls
+    assert "Políticas recuperadas: nenhuma" in slice_
+
+
+def test_it_should_show_the_dont_know_judge_a_policy_retrieved_again_in_its_turn(
+    round_dir,
+):
+    case = make_case(
+        "again",
+        ("Qual o prazo de devolução?", "E se o produto já foi aberto?"),
+        judge=[{"criterion": "dont_know_accuracy", "turn": 2}],
+    )
+    search = {"query": "devolução de ração"}
+    gateways = Gateways(
+        {
+            "again": [
+                call("search_policies", search),
+                POLICY_REPLY,
+                call("search_policies", search, "call_2"),
+                "Pode, se a embalagem estiver lacrada.",
+            ]
+        }
+    )
+    judge = JudgeStub()
+
+    run_round(round_dir, [case], gateways, runs=1, judge=judge)
+
+    [(_, slice_)] = judge.calls
+    assert re.search(r"Políticas recuperadas:.*Troca e devolução", slice_)
+
+
 def test_it_should_append_each_verdict_to_the_judge_log_under_the_run_id(round_dir):
     case = make_case("judged", judge=["tone", "escalation_judgment"])
 
