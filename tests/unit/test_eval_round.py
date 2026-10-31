@@ -1505,6 +1505,9 @@ def repo(tmp_path, monkeypatch) -> Path:
     for name, text in files.items():
         (path / name).parent.mkdir(parents=True, exist_ok=True)
         (path / name).write_text(text, encoding="utf-8")
+    # the pre-push hook exports GIT_DIR and friends, which would aim git at the real repository
+    for name in [name for name in os.environ if name.startswith("GIT_")]:
+        monkeypatch.delenv(name)
     identity = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath="]
     for args in (["init", "-q"], ["add", "."], [*identity, "commit", "-qm", "init"]):
         subprocess.run(  # noqa: S603
