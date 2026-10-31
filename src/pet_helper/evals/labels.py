@@ -4,7 +4,6 @@ import json
 import os
 import random
 import sys
-import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -33,7 +32,6 @@ from pet_helper.evals.judge import (
     AnthropicJudgeClient,
     BatchClient,
     BatchItem,
-    BatchNotEnded,
     JudgeClient,
     JudgeReplyError,
     Transcript,
@@ -42,12 +40,13 @@ from pet_helper.evals.judge import (
     judge,
     judge_prompt_sha256,
     verdict_from_reply,
+    wait_for_batch,
 )
 from pet_helper.evals.judge import _reserve_call_settle as reserve_call_settle
 from pet_helper.evals.round import JUDGE_CALL_ESTIMATE_USD
 from pet_helper.evals.round import _read_runs as read_runs
 from pet_helper.evals.stats import wilson_interval
-from pet_helper.trace import UnknownPriceError
+from pet_helper.trace import UnknownPriceError, read_jsonl
 
 _HELD_OUT = "held_out"
 # natural and seeded items each, per criterion: about 50 items in all
@@ -94,10 +93,6 @@ class _Source:
     transcript: Transcript
     turn: int | None
 
-    @property
-    def slice(self) -> str:
-        return build_slice(self.criterion, self.transcript, self.turn)
-
 
 @dataclass(frozen=True)
 class _Row:
@@ -116,10 +111,7 @@ def _labels(directory: Path) -> Path:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip()]
+    return read_jsonl(path) if path.is_file() else []
 
 
 def _dump_jsonl(rows: Sequence[dict[str, Any]]) -> str:
@@ -289,7 +281,7 @@ def _pool(directory: Path) -> None:
         {
             "criterion": s.criterion,
             "case_id": s.case_id,
-            "slice": s.slice,
+            "slice": build_slice(s.criterion, s.transcript, s.turn),
             "group": "natural",
             "seeded": False,
         }
@@ -391,7 +383,6 @@ def _judge_batch(
     timeout_seconds: float,
 ) -> tuple[dict[str, str], Decimal, str | None]:
     ids = [item["id"] for item in items]
-    deadline = time.monotonic() + timeout_seconds
     try:
         budget.before_call(
             batch_reserve_usd(len(items), JUDGE_MAX_TOKENS, model=client.model)
@@ -402,15 +393,12 @@ def _judge_batch(
                 for item in items
             ]
         )
-        while True:
-            try:
-                collection = client.collect(batch_id, ids)
-                break
-            except BatchNotEnded:
-                if time.monotonic() >= deadline:
-                    budget.on_error(None)
-                    return {}, Decimal(0), f"batch {batch_id} did not end in time"
-                time.sleep(poll_seconds)
+        collection = wait_for_batch(
+            client, batch_id, ids, timeout_seconds, poll_seconds
+        )
+        if collection is None:
+            budget.on_error(None)
+            return {}, Decimal(0), f"batch {batch_id} did not end in time"
     except _STOPS as error:
         return {}, Decimal(0), str(error)
     verdicts: dict[str, str] = {}

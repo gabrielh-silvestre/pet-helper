@@ -20,7 +20,6 @@ if TYPE_CHECKING:
         current_git_state,
         rejudge_round,
         run_round,
-        utc_now,
     )
 
 # the runner and the judge import inspect_ai, which the cases and checks must not pull in
@@ -36,7 +35,6 @@ _LAZY_EXPORTS = {
     "current_git_state": "round",
     "rejudge_round": "round",
     "run_round": "round",
-    "utc_now": "round",
 }
 
 __all__ = [
@@ -55,7 +53,6 @@ __all__ = [
     "load_cases",
     "rejudge_round",
     "run_round",
-    "utc_now",
     "validate_structure",
 ]
 

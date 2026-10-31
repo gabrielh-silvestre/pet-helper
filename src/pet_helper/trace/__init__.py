@@ -4,6 +4,7 @@ from pet_helper.trace.callback import (
     fallback_scope,
 )
 from pet_helper.trace.cost import UnknownPriceError, cost_usd
+from pet_helper.trace.jsonl import read_jsonl
 from pet_helper.trace.metrics import Summary, summarize
 from pet_helper.trace.pii import PiiFinding, find_raw_pii
 from pet_helper.trace.tracer import (
@@ -29,6 +30,7 @@ __all__ = [
     "emit",
     "fallback_scope",
     "find_raw_pii",
+    "read_jsonl",
     "summarize",
     "turn_scope",
 ]

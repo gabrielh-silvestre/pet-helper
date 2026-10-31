@@ -27,15 +27,16 @@ from inspect_ai.solver import TaskState
 from pet_helper.evals.budget import (
     BATCH_PRICE_FACTOR,
     JUDGE_CALL_RESERVE_USD,
+    JUDGE_INPUT_LIMIT_TOKENS,
     JUDGE_MAX_TOKENS,
     JUDGE_MODEL,
     RoundBudget,
     batch_reserve_usd,
-    judge_call_reserve_usd,
+    worst_case_usd,
 )
 from pet_helper.evals.cases import EvalCase, JudgeEntry
 from pet_helper.evals.confirm import confirm
-from pet_helper.trace import BudgetExceeded, UnknownPriceError, cost_usd
+from pet_helper.trace import BudgetExceeded, UnknownPriceError, cost_usd, read_jsonl
 
 DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 JUDGE_MODEL_ENV = "PET_HELPER_JUDGE_MODEL"
@@ -177,6 +178,25 @@ class BatchClient(Protocol):
     def submit(self, items: Sequence[BatchItem]) -> str: ...
 
     def collect(self, batch_id: str, item_ids: Sequence[str]) -> BatchCollection: ...
+
+
+def wait_for_batch(
+    client: BatchClient,
+    batch_id: str,
+    item_ids: Sequence[str],
+    timeout_seconds: float,
+    poll_seconds: float,
+    *,
+    retry_on: tuple[type[Exception], ...] = (BatchNotEnded,),
+) -> BatchCollection | None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            return client.collect(batch_id, item_ids)
+        except retry_on:
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(poll_seconds)
 
 
 # prompt and slices
@@ -419,11 +439,9 @@ def append_verdict(path: Path, run_id: str, criterion: str, verdict: Verdict) ->
 def current_verdicts(path: Path) -> dict[tuple[str, str], dict]:
     if not path.exists():
         return {}
-    current = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = json.loads(line)
-        current[(record["run_id"], record["criterion"])] = record
-    return current
+    return {
+        (record["run_id"], record["criterion"]): record for record in read_jsonl(path)
+    }
 
 
 # the inline scorer
@@ -462,7 +480,7 @@ def _judge_charged(
 ) -> Verdict:
     verdict = _reserve_call_settle(
         budget,
-        judge_call_reserve_usd(client.model),
+        worst_case_usd(client.model, JUDGE_INPUT_LIMIT_TOKENS, JUDGE_MAX_TOKENS),
         lambda: _judge_entry(entry, judged.transcript, client),
     )
     append_verdict(log_path, judged.run_id, entry.criterion, verdict)
@@ -532,15 +550,11 @@ def _run_smoke_batch(
     system, user = build_prompt("tone", build_slice("tone", _SMOKE_TRANSCRIPT))
     item = BatchItem("smoke-1", system, user)
     batch_id = batch_client.submit([item])
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        try:
-            collection = batch_client.collect(batch_id, [item.item_id])
-            break
-        except BatchNotEnded:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(poll_seconds)
+    collection = wait_for_batch(
+        batch_client, batch_id, [item.item_id], timeout_seconds, poll_seconds
+    )
+    if collection is None:
+        raise BatchNotEnded(batch_id)
     if item.item_id in collection.failed:
         raise JudgeReplyError(
             f"Batch {batch_id} item failed: {collection.failed[item.item_id]}"

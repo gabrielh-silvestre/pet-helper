@@ -123,24 +123,21 @@ def _block(header: str, items: Sequence[str]) -> list[str]:
     return [header, *items, ""] if items else []
 
 
-def _interval(passes: int, made: int) -> str:
-    low, high = wilson_interval(passes, made)
-    return f"{low:.2f} to {high:.2f}"
-
-
 def _summary(results: list[CaseResult], runs: int) -> list[str]:
     note = f"note: the {runs} runs of a case are correlated, so per-case intervals are optimistic"
     if runs != DEFAULT_RUNS:
         cases = []
         for result in results:
             passes, made = (int(part) for part in result.k.split("/"))
+            low, high = wilson_interval(passes, made)
             cases.append(
-                f"{result.case_id} {result.k_display} ({_interval(passes, made)})"
+                f"{result.case_id} {result.k_display} ({low:.2f} to {high:.2f})"
             )
         return [note, *cases]
     passing = sum(result.passed for result in results)
+    low, high = wilson_interval(passing, len(results))
     lines = [
-        f"pass^3: {passing}/{len(results)} cases (95% Wilson interval {_interval(passing, len(results))})",
+        f"pass^3: {passing}/{len(results)} cases (95% Wilson interval {low:.2f} to {high:.2f})",
         note,
     ]
     if results and passing == len(results):

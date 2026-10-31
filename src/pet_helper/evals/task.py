@@ -79,13 +79,6 @@ class _Conductor:
         default_factory=dict
     )
 
-    def _registry(self, case: EvalCase, kit_dir: Path) -> ToolRegistry:
-        # the tools only read the kit, so samples with the same kit and date share them
-        key = (case.fixture, case.today)
-        if key not in self.registries:
-            self.registries[key] = build_kit_registry(kit_dir, case.today)
-        return self.registries[key]
-
     def converse(self, case: EvalCase, epoch: int) -> _Conversation:
         session_id = f"{case.id}-e{epoch}"
         with tempfile.TemporaryDirectory() as scratch:
@@ -94,9 +87,13 @@ class _Conductor:
                 kit_dir = Path(scratch) / "kit"
                 overlay_kit(self.kit_dir, case.fixture, kit_dir)
             with _BUILD_LOCK:
+                # the tools only read the kit, so samples with the same kit and date share them
+                key = (case.fixture, case.today)
+                if key not in self.registries:
+                    self.registries[key] = build_kit_registry(kit_dir, case.today)
                 assistant = build_assistant(
                     gateway=self.gateway_factory(case, epoch),
-                    registry=self._registry(case, kit_dir),
+                    registry=self.registries[key],
                     kit_dir=kit_dir,
                     today=case.today,
                     tracer=self.tracer,
@@ -209,18 +206,6 @@ def make_executor(max_samples: int, judge_slots: int) -> ThreadPoolExecutor:
     )
 
 
-def _not_run_score() -> Score:
-    return Score.unscored(
-        reason="budget",
-        metadata={
-            "outcome": "not_run",
-            "failed_checks": [],
-            "reason": "budget",
-            "expected_doc_recall": {},
-        },
-    )
-
-
 def _score_of(
     outcome: str,
     failed_checks: list[str],
@@ -291,13 +276,6 @@ def eval_task(
     # once the round cap refuses a call, the samples still waiting must not start
     stop = threading.Event()
 
-    def epoch_of(state: TaskState) -> int:
-        # a retry eval of the same round continues the epoch numbering of the first
-        return state.epoch + epoch_offset
-
-    def session_of(state: TaskState) -> str:
-        return f"{state.sample_id}-e{epoch_of(state)}"
-
     @solver
     def conversation_solver() -> Solver:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -305,15 +283,17 @@ def eval_task(
             if stop.is_set():
                 state.store.set("record", {"not_run": True})
                 return state
+            # a retry eval of the same round continues the epoch numbering of the first
+            epoch = state.epoch + epoch_offset
             try:
                 conversation = await asyncio.get_running_loop().run_in_executor(
-                    executor, conductor.converse, case, epoch_of(state)
+                    executor, conductor.converse, case, epoch
                 )
             except BudgetExceeded:
                 stop.set()
                 state.store.set("record", {"not_run": True})
                 return state
-            conversations[session_of(state)] = conversation
+            conversations[f"{state.sample_id}-e{epoch}"] = conversation
             state.store.set("record", conversation.stored)
             return state
 
@@ -323,8 +303,16 @@ def eval_task(
     def case_scorer() -> Scorer:
         async def score(state: TaskState, target: Target) -> Score:
             if state.store.get("record", {}).get("not_run"):
-                return _not_run_score()
-            session_id = session_of(state)
+                return Score.unscored(
+                    reason="budget",
+                    metadata={
+                        "outcome": "not_run",
+                        "failed_checks": [],
+                        "reason": "budget",
+                        "expected_doc_recall": {},
+                    },
+                )
+            session_id = f"{state.sample_id}-e{state.epoch + epoch_offset}"
             case = cases_by_id[str(state.sample_id)]
             conversation = conversations[session_id]
             result = evaluate_case(case, conversation.record, conversation.known_skus)
@@ -352,7 +340,15 @@ def eval_task(
                         verdicts.append((entry.criterion, verdict))
                 except BudgetExceeded:
                     stop.set()
-                    return _not_run_score()
+                    return Score.unscored(
+                        reason="budget",
+                        metadata={
+                            "outcome": "not_run",
+                            "failed_checks": [],
+                            "reason": "budget",
+                            "expected_doc_recall": {},
+                        },
+                    )
                 except JudgeReplyError:
                     # the conversation is paid for: keep it, so `--rejudge` can read it again
                     return Score.unscored(

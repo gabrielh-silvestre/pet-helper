@@ -6,7 +6,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -69,7 +69,6 @@ def default_environment() -> EvalEnvironment:
         AnthropicBatchClient,
         AnthropicJudgeClient,
         current_git_state,
-        utc_now,
     )
 
     return EvalEnvironment(
@@ -80,7 +79,7 @@ def default_environment() -> EvalEnvironment:
         gateway_factory=lambda case, epoch: build_gateway(),
         kit_dir=Path(DEFAULT_KIT_DIR),
         git_state=current_git_state,
-        clock=utc_now,
+        clock=lambda: datetime.now(UTC),
         judge_client=AnthropicJudgeClient(),
         batch_client=AnthropicBatchClient(),
     )
@@ -168,6 +167,24 @@ def _reference_round(root: Path, case_id: str) -> str | None:
     return None
 
 
+def _decisive_reference(
+    args: argparse.Namespace, root: Path, case_id: str
+) -> tuple[str | None, bool]:
+    """The round a decisive rerun decides against, and whether such a round was found."""
+    if args.case is None or args.runs <= _DECISIVE_ABOVE_RUNS:
+        return None, True
+    reference = _reference_round(root, case_id)
+    if reference is None:
+        print(
+            f"No round of {DEFAULT_RUNS} runs with {case_id} to decide against",
+            file=sys.stderr,
+        )
+        return None, False
+    if not args.held_out:
+        print(f"Decisive rerun against round {reference}")
+    return reference, True
+
+
 def _new_round(
     args: argparse.Namespace, env: EvalEnvironment, cases_dir: Path, root: Path
 ) -> int:
@@ -194,16 +211,9 @@ def _new_round(
         if smoke and not held_out
         else root
     )
-    decisive = args.case is not None and args.runs > _DECISIVE_ABOVE_RUNS
-    reference = _reference_round(root, selection[0].id) if decisive else None
-    if decisive and reference is None:
-        print(
-            f"No round of {DEFAULT_RUNS} runs with {selection[0].id} to decide against",
-            file=sys.stderr,
-        )
+    reference, reachable = _decisive_reference(args, root, selection[0].id)
+    if not reachable:
         return 1
-    if reference and not held_out:
-        print(f"Decisive rerun against round {reference}")
     result = run_round(
         selection,
         runs=args.runs,

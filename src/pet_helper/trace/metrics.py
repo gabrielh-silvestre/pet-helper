@@ -1,11 +1,12 @@
-import json
 import statistics
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from pet_helper.trace.jsonl import read_jsonl
 
 _P95_CUTS = 20
 
@@ -45,13 +46,6 @@ class Summary:
     fallback_rate: float
     escalations: dict[str, int]
     conversations: dict[str, ConversationRow]
-
-
-def _events(paths: Iterable[Path]) -> Iterator[dict[str, Any]]:
-    for path in paths:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                yield json.loads(line)
 
 
 def _percentile_95(values: list[float]) -> float:
@@ -122,7 +116,7 @@ def _turn_latencies(events: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def summarize(paths: Iterable[Path]) -> Summary:
-    events = list(_events(paths))
+    events = [event for path in paths for event in read_jsonl(path)]
     by_kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         by_kind[event["event"]].append(event)

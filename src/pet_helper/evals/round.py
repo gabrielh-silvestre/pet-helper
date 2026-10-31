@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import threading
-import time
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +45,7 @@ from pet_helper.evals.judge import (
     build_slice,
     current_verdicts,
     verdict_from_reply,
+    wait_for_batch,
 )
 from pet_helper.evals.judge import _judge_charged as judge_charged
 from pet_helper.evals.task import (
@@ -62,7 +62,7 @@ from pet_helper.gateway import (
     resolve_ollama_model,
 )
 from pet_helper.orders import FAILURE_ENV
-from pet_helper.trace import CONTENT_ENV, UnknownPriceError, find_raw_pii
+from pet_helper.trace import CONTENT_ENV, UnknownPriceError, find_raw_pii, read_jsonl
 
 KIT_DIR = Path(DEFAULT_KIT_DIR)
 DEFAULT_RUNS = 3
@@ -224,14 +224,6 @@ class _RoundBudget(RoundBudget):
             self.halted = True
         super().on_error(usage)
 
-    def on_unknown_price(self) -> None:
-        self.halted = True
-        self.price_unknown = True
-
-
-def utc_now() -> datetime:
-    return datetime.now(UTC)
-
 
 def _git(*args: str) -> str:
     done = subprocess.run(  # noqa: S603
@@ -250,23 +242,22 @@ def current_git_state() -> GitState:
     return GitState(_git("rev-parse", "HEAD"), bool(changed))
 
 
-def _set_environment(name: str, value: str | None) -> None:
-    if value is None:
-        os.environ.pop(name, None)
-    else:
-        os.environ[name] = value
-
-
 @contextmanager
 def _round_environment() -> Iterator[None]:
     saved = {name: os.environ.get(name) for name in _ROUND_ENVIRONMENT}
     for name, value in _ROUND_ENVIRONMENT.items():
-        _set_environment(name, value)
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
     try:
         yield
     finally:
         for name, value in saved.items():
-            _set_environment(name, value)
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 # estimate
@@ -388,16 +379,12 @@ def _model_calls(directory: Path, session_id: str) -> list[dict[str, Any]]:
     path = directory / "traces" / f"{session_id}.jsonl"
     if not path.is_file():
         return []
-    events = (
-        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
-    )
-    return [event for event in events if event["event"] == "model.call"]
+    return [event for event in read_jsonl(path) if event["event"] == "model.call"]
 
 
 def _judge_costs(path: Path) -> dict[str, Decimal]:
     costs: dict[str, Decimal] = defaultdict(Decimal)
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = json.loads(line)
+    for record in read_jsonl(path):
         costs[record["run_id"]] += Decimal(record["cost_usd"])
     return costs
 
@@ -623,7 +610,7 @@ def _judge_sync(
             failed.set()
             return True
         except UnknownPriceError:
-            budget.on_unknown_price()
+            budget.halted = budget.price_unknown = True
             return False
         except JudgeReplyError:
             # the run stays without a verdict, so it stays pending
@@ -650,15 +637,16 @@ def _settle_batch(
     wait_seconds: float,
     poll_seconds: float,
 ) -> bool:
-    deadline = time.monotonic() + wait_seconds
-    while True:
-        try:
-            collection = client.collect(batch_id, list(ids))
-            break
-        except (BatchNotEnded, anthropic.APIError):
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(poll_seconds)
+    collection = wait_for_batch(
+        client,
+        batch_id,
+        list(ids),
+        wait_seconds,
+        poll_seconds,
+        retry_on=(BatchNotEnded, anthropic.APIError),
+    )
+    if collection is None:
+        return False
     cost = Decimal(0)
     for item_id, (text, usage) in collection.completions.items():
         judged, entry = ids[item_id]
@@ -669,7 +657,7 @@ def _settle_batch(
             cost += (error.cost or Decimal(0)) * BATCH_PRICE_FACTOR
             continue
         except UnknownPriceError:
-            budget.on_unknown_price()
+            budget.halted = budget.price_unknown = True
             break
         verdict = replace(verdict, cost_usd=verdict.cost_usd * BATCH_PRICE_FACTOR)
         append_verdict(log_path, judged.run_id, entry.criterion, verdict)
@@ -730,7 +718,7 @@ def run_round(
     reference_round: str | None = None,
     smoke: bool = False,
     git_state: Callable[[], GitState] = current_git_state,
-    clock: Callable[[], datetime] = utc_now,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     round_id: str | None = None,
     batch_wait_seconds: float = 0.0,
     batch_poll_seconds: float = 0.0,
