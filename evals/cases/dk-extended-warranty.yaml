@@ -1,9 +1,0 @@
-id: dk-extended-warranty
-suite: capability
-today: '2026-11-03'
-behaviors:
-- dont_know
-turns:
-- Vocês vendem garantia estendida para o Arranhador Torre Miauzito? Quanto custa?
-judge:
-- dont_know_accuracy

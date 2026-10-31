@@ -1,9 +1,0 @@
-id: dk-loyalty-program
-suite: capability
-today: '2026-11-03'
-behaviors:
-- dont_know
-turns:
-- Como funciona o programa de pontos de fidelidade de vocês? Quantos pontos eu ganho por compra?
-judge:
-- dont_know_accuracy

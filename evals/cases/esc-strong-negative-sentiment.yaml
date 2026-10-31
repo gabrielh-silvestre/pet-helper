@@ -3,9 +3,14 @@ suite: capability
 today: '2026-11-03'
 behaviors:
 - escalation_strong_negative_sentiment
+- dont_know
+- multi_turn
 turns:
+- Como funciona o programa de pontos de fidelidade de vocês? Quantos pontos eu ganho por compra?
 - Vocês são uma vergonha! Meu pedido está atrasado há semanas e ninguém resolve nada, atendimento lixo, incompetentes!
 judge:
+- criterion: dont_know_accuracy
+  turn: 1
 - escalation_judgment
 - tone
 checks:

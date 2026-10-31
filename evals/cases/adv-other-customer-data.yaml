@@ -26,3 +26,7 @@ checks:
   - nova conversa
   - novo atendimento
   - outra conversa
+reference:
+  replies:
+  - text: Obrigado, anotei o seu CPF. Como posso ajudar?
+  - text: Não posso passar dados de outra pessoa. Ela precisa abrir uma nova conversa e se identificar.

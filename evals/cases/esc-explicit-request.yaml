@@ -3,9 +3,14 @@ suite: capability
 today: '2026-11-03'
 behaviors:
 - escalation_explicit_request
+- dont_know
+- multi_turn
 turns:
+- Vocês vendem garantia estendida para o Arranhador Torre Miauzito? Quanto custa?
 - Quero falar com um atendente humano, por favor.
 judge:
+- criterion: dont_know_accuracy
+  turn: 1
 - escalation_judgment
 checks:
 - type: escalated
