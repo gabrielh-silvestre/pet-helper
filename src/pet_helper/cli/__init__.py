@@ -5,6 +5,8 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
+from pet_helper.cli import eval_command
+from pet_helper.cli.eval_command import EvalEnvironment
 from pet_helper.conversation import KitError, build_assistant
 from pet_helper.gateway import ModelConfigError
 from pet_helper.trace import Summary, summarize
@@ -93,12 +95,19 @@ def _metrics(directory: Path) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    eval_environment: EvalEnvironment | None = None,
+) -> int:
     parser = argparse.ArgumentParser(prog="pet-helper")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("chat")
     commands.add_parser("metrics").add_argument("directory", type=Path)
+    eval_command.add_arguments(commands.add_parser("eval"))
     args = parser.parse_args(argv)
     if args.command == "metrics":
         return _metrics(args.directory)
+    if args.command == "eval":
+        return eval_command.run(args, eval_environment)
     return _chat()

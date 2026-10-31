@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import subprocess
+import time
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -82,6 +83,8 @@ _COLUMNS = (
     "unable_runs",
     "unable_reasons",
 )
+# the analysis writes these cells; a recomputation of the round keeps them
+_ANALYSIS_COLUMNS = ("first_failure_note", "category", "human_label")
 # only a run that ended pass or fail has a reply for the judge to read
 _JUDGEABLE = ("pass", "fail")
 _VALID = ("pass", "fail")
@@ -211,7 +214,7 @@ class _RoundBudget(RoundBudget):
         super().on_error(usage)
 
 
-def _utc_now() -> datetime:
+def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
@@ -225,7 +228,7 @@ def _git(*args: str) -> str:
     return done.stdout.strip()
 
 
-def _git_state() -> GitState:
+def current_git_state() -> GitState:
     changed = _git(
         "status", "--porcelain", "--untracked-files=no", "--", "src", "evals/cases"
     )
@@ -455,13 +458,19 @@ def _collect(directory: Path, runs: int) -> _Collected:
 
 def _write_cases(directory: Path, runs: int, cases: Sequence[CaseResult]) -> None:
     columns = [name.format(runs=runs) for name in _COLUMNS]
-    with (directory / "cases.csv").open("w", encoding="utf-8", newline="") as file:
+    path = directory / "cases.csv"
+    written = (
+        {row["case_id"]: row for row in _read_rows(path)} if path.is_file() else {}
+    )
+    with path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=columns)
         writer.writeheader()
         for case in cases:
+            kept = written.get(case.case_id, {})
             writer.writerow(
                 {
                     **dict.fromkeys(columns, ""),
+                    **{name: kept.get(name, "") for name in _ANALYSIS_COLUMNS},
                     "case_id": case.case_id,
                     "suite": case.suite or "",
                     columns[2]: case.k,
@@ -547,17 +556,57 @@ def _judge_sync(
         return all(list(pool.map(judge_one, items)))
 
 
+def _batch_ids(
+    items: Sequence[tuple[Judged, JudgeEntry]],
+) -> dict[str, tuple[Judged, JudgeEntry]]:
+    return {f"item-{index}": item for index, item in enumerate(items)}
+
+
+def _settle_batch(
+    client: BatchClient,
+    batch_id: str,
+    ids: Mapping[str, tuple[Judged, JudgeEntry]],
+    log_path: Path,
+    budget: RoundBudget,
+    wait_seconds: float,
+    poll_seconds: float,
+) -> bool:
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            collection = client.collect(batch_id, list(ids))
+            break
+        except BatchNotEnded:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_seconds)
+    cost = Decimal(0)
+    for item_id, (text, usage) in collection.completions.items():
+        judged, entry = ids[item_id]
+        try:
+            verdict = verdict_from_reply(text, usage, client.model)
+        except JudgeReplyError:
+            continue
+        verdict = replace(verdict, cost_usd=verdict.cost_usd * BATCH_PRICE_FACTOR)
+        append_verdict(log_path, judged.run_id, entry.criterion, verdict)
+        cost += verdict.cost_usd
+    budget.on_cost(cost)
+    return True
+
+
 def _judge_batch(
     items: Sequence[tuple[Judged, JudgeEntry]],
     client: BatchClient,
     log_path: Path,
     budget: RoundBudget,
+    wait_seconds: float,
+    poll_seconds: float,
 ) -> str | None:
     # the worst case is held from the submission until the collection settles the real cost
     budget.before_call(
         batch_reserve_usd(len(items), JUDGE_MAX_TOKENS, model=client.model)
     )
-    ids = {f"item-{index}": item for index, item in enumerate(items)}
+    ids = _batch_ids(items)
     batch_id = client.submit(
         [
             BatchItem(
@@ -570,22 +619,10 @@ def _judge_batch(
             for item_id, (judged, entry) in ids.items()
         ]
     )
-    try:
-        collection = client.collect(batch_id, list(ids))
-    except BatchNotEnded:
-        return batch_id
-    cost = Decimal(0)
-    for item_id, (text, usage) in collection.completions.items():
-        judged, entry = ids[item_id]
-        try:
-            verdict = verdict_from_reply(text, usage, client.model)
-        except JudgeReplyError:
-            continue
-        verdict = replace(verdict, cost_usd=verdict.cost_usd * BATCH_PRICE_FACTOR)
-        append_verdict(log_path, judged.run_id, entry.criterion, verdict)
-        cost += verdict.cost_usd
-    budget.on_cost(cost)
-    return None
+    ended = _settle_batch(
+        client, batch_id, ids, log_path, budget, wait_seconds, poll_seconds
+    )
+    return None if ended else batch_id
 
 
 # the rounds
@@ -608,9 +645,11 @@ def run_round(
     max_samples: int | None = None,
     reference_round: str | None = None,
     smoke: bool = False,
-    git_state: Callable[[], GitState] = _git_state,
-    clock: Callable[[], datetime] = _utc_now,
+    git_state: Callable[[], GitState] = current_git_state,
+    clock: Callable[[], datetime] = utc_now,
     round_id: str | None = None,
+    batch_wait_seconds: float = 0.0,
+    batch_poll_seconds: float = 0.0,
 ) -> RoundResult:
     if reference_round is not None and len(selection) != 1:
         raise ValueError("A decisive rerun takes exactly one case")
@@ -665,7 +704,18 @@ def run_round(
             _read_runs(directory), {case.id: case for case in selection}
         )
         try:
-            batch_id = _judge_batch(items, batch, log_path, budget) if items else None
+            batch_id = (
+                _judge_batch(
+                    items,
+                    batch,
+                    log_path,
+                    budget,
+                    batch_wait_seconds,
+                    batch_poll_seconds,
+                )
+                if items
+                else None
+            )
         except BudgetExceeded:
             capped = True
 
@@ -731,4 +781,42 @@ def rejudge_round(
     stop_reason, stop_line = _stop(budget, collected, capped, round_dir)
     return RoundResult(
         saved["round_id"], estimate, False, collected.cases, stop_reason, stop_line
+    )
+
+
+def collect_round(
+    round_dir: Path,
+    selection: Sequence[EvalCase],
+    batch_client: BatchClient,
+    *,
+    budget_usd: Decimal = Decimal(5),
+    wait_seconds: float = 0.0,
+    poll_seconds: float = 0.0,
+) -> RoundResult:
+    saved = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
+    batch_id = saved.get("batch_id")
+    if batch_id is None:
+        raise ValueError(f"Round {saved['round_id']} has no pending batch")
+    # the same runs in the same order as at submission, so the item ids match
+    items = _judge_items(_read_runs(round_dir), {case.id: case for case in selection})
+    budget = _RoundBudget(budget_usd)
+    ended = _settle_batch(
+        batch_client,
+        batch_id,
+        _batch_ids(items),
+        round_dir / "judge.jsonl",
+        budget,
+        wait_seconds,
+        poll_seconds,
+    )
+    fields = {k: v for k, v in saved.items() if not (ended and k == "batch_id")}
+    collected = _finalize(round_dir, saved["runs"], fields)
+    stop_reason, stop_line = _stop(budget, collected, False, round_dir)
+    return RoundResult(
+        saved["round_id"],
+        Estimate(Decimal(0), "collect"),
+        False,
+        collected.cases,
+        stop_reason,
+        stop_line,
     )

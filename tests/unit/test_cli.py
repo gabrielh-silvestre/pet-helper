@@ -1,3 +1,4 @@
+import importlib
 import json
 import re
 import sys
@@ -665,3 +666,48 @@ def test_it_should_exit_with_one_printing_one_line_when_the_metrics_directory_is
     ]
     assert (code, len(non_empty_lines)) == (1, 1)
     assert str(empty) in non_empty_lines[0]
+
+
+EVAL_FLAGS = (
+    "--suite",
+    "--case",
+    "--judge",
+    "--held-out",
+    "--runs",
+    "--collect",
+    "--rejudge",
+)
+
+
+def _eval_help(capsys) -> str:
+    with pytest.raises(SystemExit) as stop:
+        main(["eval", "--help"])
+    assert stop.value.code == 0
+    return capsys.readouterr().out
+
+
+@pytest.mark.parametrize("flag", EVAL_FLAGS)
+def test_it_should_list_each_eval_flag_in_the_eval_help(flag, capsys):
+    assert flag in _eval_help(capsys)
+
+
+@pytest.mark.parametrize("choice", ["sync", "batch", "none"])
+def test_it_should_list_each_judge_mode_in_the_eval_help(choice, capsys):
+    assert choice in _eval_help(capsys)
+
+
+def test_it_should_exit_with_two_when_the_judge_mode_is_unknown(capsys):
+    with pytest.raises(SystemExit) as stop:
+        main(["eval", "--judge", "parallel"])
+
+    assert (stop.value.code, "--judge" in capsys.readouterr().err) == (2, True)
+
+
+def test_it_should_not_import_inspect_ai_to_load_the_cli(monkeypatch):
+    monkeypatch.setitem(sys.modules, "inspect_ai", None)
+    for name in [n for n in sys.modules if n.startswith("pet_helper.cli")]:
+        monkeypatch.delitem(sys.modules, name)
+
+    module = importlib.import_module("pet_helper.cli")
+
+    assert module.main is not None
