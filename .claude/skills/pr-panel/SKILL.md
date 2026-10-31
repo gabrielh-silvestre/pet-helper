@@ -17,6 +17,7 @@ Runs step 7 of [fluxo-desenvolvimento.md](../../../docs/directives/fluxo-desenvo
 - Invoke skills with the Skill tool, naming the next skill only in the Skill call.
 - TDD split: the `test-engineer` writes and changes tests, the `executor` writes production code (`test-standards` / `code-standards` first). Subagents `sonnet`/`haiku`, named from `AGENT-NAMES.md`.
 - Product decision: ask the unit's owner-seat critic, as in steps 2 to 6 of [owner-seat.md](../../commands/owner-seat.md): reuse the one in `critic.md` or launch it, and send the finding, its investigation, `docs/directives/estrategia.md` and `docs/requisitos.md`; apply its choice and log it in `.ignore/reviews/<slug>/decisions.md` with `origin: simulated` and the hexlog id of its `premise`. A fix that would alter or contradict a directive, premise or ADR is critical: the owner decides it.
+- Stale baseline: before the verdict, check `git diff <measured SHA>..HEAD -- src/`, with the SHA from the baseline's `round.json`; when it is not empty, the fix commit puts the line "baseline measured at <sha>, before N commits that changed `src/`" in the README and the PR body. Rerunning the baseline is the owner's call and needs a fresh verdict on the resulting head.
 - Impasse (a step fails twice, the same hook block repeats, the critic cannot decide): record an `impasse` (phase, reason, what is done) without changing the state phase, stop and leave this tab open. The owner resumes in this tab.
 
 ## Steps

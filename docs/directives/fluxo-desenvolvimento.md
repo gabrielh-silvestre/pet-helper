@@ -4,16 +4,17 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
 
 ## Macroetapas
 
-As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do projeto. O dono entra só na entrevista, no aval do fim da M1 e no merge.
+As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do projeto. O dono entra só na entrevista, no aval do fim da M1, nos passos pagos que o plano aprovado lista e no merge.
 
 | Macro | Comando | Etapas | Termina em |
 |---|---|---|---|
 | M1 pré-código | `/pre-code <objetivo>` | 1 a 3 | Pergunta ao dono: aprovar, pedir ajuste ou parar. Aprovar dispara a M2 |
-| M2 entrega | `/deliver <slug>` | 4 a 6 | PR em draft; abre a tab `<slug>-panel` do Herdr e dispara a M3 |
+| M2 entrega | `/deliver <slug>` | 4 a 6 | PR em draft; abre a tab `<slug>-panel` do Herdr e dispara a M3, salvo a pausa para os passos do dono (retome com `/deliver <slug>`) |
 | M3 painel | `/pr-panel <slug> <PR> <modo>` | 7 | Veredito postado sozinho no head final; o merge segue com o dono |
 
 - Cada macro pode ser chamada à mão com o slug; é assim que se retoma uma unidade parada.
-- Impasse (2 voltas esgotadas, hook barrando a mesma coisa, `ralph` sem convergir, critic sem decisão): a macro para e registra `impasse` no hexlog com fase, motivo e progresso, sem notificação.
+- Impasse (2 voltas esgotadas, hook barrando a mesma coisa, `ralph` sem convergir, critic sem decisão) ou pausa planejada para os passos do dono, que não é falha: a macro para e registra `impasse` no hexlog com fase, motivo e progresso, sem notificação.
+- Passos do dono: quando `docs/specs/<slug>/plan.md` tem a seção `## Passos do dono`, a M2 para depois do PR em draft e antes da etapa 7, registra `impasse` com o motivo `owner steps pending`, sem mudar a fase, e mostra os comandos da seção. Os passos rodam na branch, cada comando pago no terminal do dono; a sessão principal prepara, lê os resultados visíveis e commita. Casos reservados gerados nesses passos chegam à `main` por um PR próprio, que o dono mergeia depois de aprovar cada caso, e entram na branch por merge da `main`, para que o diff que o painel lê não os mostre. Quando o dono avisa que terminou e o head está enviado, `/deliver <slug>` retoma na etapa 7.
 - Achado de revisão que vira decisão de produto vai ao critic da cadeira, que decide; a macro aplica e registra no PR e no hexlog, e o dono revê no merge.
 - Depois das correções de cada revisão, o `code-simplifier` roda de novo sobre o trecho corrigido, só relatando; reprovação volta ao `executor`, no máximo 2 vezes.
 
@@ -44,6 +45,7 @@ As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do 
 7. **Revisão do PR.** Por `/review-pr --auto` no PR aberto, rodado por um agente novo e isolado numa tab nova do Herdr, dono exclusivo da worktree até terminar.
    - Modo `--panel --normal` se a entrega toca regra de negócio (RN01-RN04), acesso a Order ou identidade do Customer ([ADR 0001](../adr/0001-order-access-by-cpf-and-order-number.md)), o prompt do modelo, ou mais de 600 linhas de produção; senão `--normal`. Na dúvida, painel. A M2 escolhe e registra o motivo.
    - BLOCKING, URGENT e NORMAL são corrigidos sozinhos num commit `fix:` único; os MINOR vão para uma issue de follow-up que aponta para o PR.
+   - Antes do veredito, a M3 confere `git diff <SHA medido>..HEAD -- src/`, com o SHA do `round.json` da baseline; se não estiver vazio, o commit de correções põe no README e no corpo do PR a linha "baseline medida em <sha>, antes de N commits que mudaram `src/`". Rodar a baseline de novo é decisão do dono e pede veredito novo no head que resultar.
    - O veredito sai por `pr-verdict --auto`, preso ao SHA do último push.
 8. **Merge.** Só o dono faz o merge, como merge commit; o fluxo nunca faz merge sozinho.
 

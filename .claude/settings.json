@@ -24,11 +24,11 @@
         ]
       },
       {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob|mcp__plugin_context-mode_.*|mcp__plugin_oh-my-claudecode_t__(python_repl|ast_grep_.*|lsp_.*)",
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"$PET_HELPER_HELD_OUT\" = 1 ] || ! jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/held-out.jq\" >/dev/null || { echo 'Held-out eval cases are hidden from agents that change the assistant; run them only through the accept/reject step.' >&2; exit 2; }",
+            "command": "[ \"$PET_HELPER_HELD_OUT\" = 1 ] || ! jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/held-out.jq\" >/dev/null || { echo 'Held-out eval cases are hidden from agents that change the assistant; run them only through the accept/reject step. To search the repository root or evals, exclude the folder: grep --exclude-dir=held_out, find -not -path */held_out/*, Grep tool glob !evals/held_out/**' >&2; exit 2; }",
             "onFailure": "block"
           }
         ]
