@@ -1,6 +1,8 @@
 import importlib
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -371,3 +373,60 @@ def test_it_should_inspect_input_without_importing_presidio_or_spacy(
     verdict = Guard(catalog).inspect_input("Meu CPF é 529.982.247-25")
 
     assert verdict.cpf == "52998224725"
+
+
+def test_it_should_build_the_presidio_engines_once_when_eight_threads_mask_first(
+    guard, monkeypatch
+):
+    import presidio_analyzer
+
+    from pet_helper.guard import service
+
+    builds: list[int] = []
+
+    class CountingAnalyzer(presidio_analyzer.AnalyzerEngine):
+        def __init__(self, *args, **kwargs):
+            builds.append(1)
+            time.sleep(0.1)
+            super().__init__(*args, **kwargs)
+
+    service._get_presidio_engines.cache_clear()
+    monkeypatch.setattr(presidio_analyzer, "AnalyzerEngine", CountingAnalyzer)
+    barrier = threading.Barrier(8)
+
+    def mask_first() -> None:
+        barrier.wait()
+        guard.mask("CPF 529.982.247-25 e maria@example.com")
+
+    threads = [threading.Thread(target=mask_first) for _ in range(8)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        monkeypatch.undo()
+        service._get_presidio_engines.cache_clear()
+
+    assert len(builds) == 1
+
+
+def test_it_should_mask_identically_when_eight_threads_mask_first(guard):
+    from pet_helper.guard import service
+
+    service._get_presidio_engines.cache_clear()
+    barrier = threading.Barrier(8)
+    outputs: list[str] = []
+
+    def mask_first() -> None:
+        barrier.wait()
+        outputs.append(guard.mask("CPF 529.982.247-25 e maria@example.com"))
+
+    threads = [threading.Thread(target=mask_first) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(outputs) == 8
+    assert len(set(outputs)) == 1

@@ -22,6 +22,7 @@ from pet_helper.conversation.record import record_node
 from pet_helper.conversation.state import ConversationState
 from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard, extract_skus
+from pet_helper.trace import emit
 
 HANDOFF_REPLY = "Vou encaminhar seu atendimento para um atendente humano."
 CPF_CONFLICT_REPLY = (
@@ -182,11 +183,20 @@ def build_graph(
 ) -> CompiledStateGraph:
     def input_guard_node(state: ConversationState) -> dict[str, Any]:
         verdict = guard.inspect_input(state.get("user_text", ""))
+        cpf_conflict = _conflicts_with(state.get("session_cpf"), verdict.cpf)
+        emit(
+            "guard.input",
+            **{
+                "pet_helper.cpf_identified": verdict.cpf is not None,
+                "pet_helper.cpf_conflict": cpf_conflict,
+                "pet_helper.injection_suspected": verdict.injection_suspected,
+            },
+        )
         return {
             "messages": [HumanMessage(verdict.model_text)],
             "user_text": "",
             "session_cpf": verdict.cpf,
-            "cpf_conflict": _conflicts_with(state.get("session_cpf"), verdict.cpf),
+            "cpf_conflict": cpf_conflict,
             "injection_suspected": verdict.injection_suspected,
         }
 
@@ -223,6 +233,14 @@ def build_graph(
         )
         invalid_skus = [sku for sku in verdict.invalid_skus if sku not in customer_skus]
         regenerated = state.get("regen_used", False)
+        emit(
+            "guard.output",
+            **{
+                "pet_helper.invalid_skus": invalid_skus,
+                "pet_helper.unretrieved_sources": verdict.unretrieved_sources,
+                "pet_helper.regenerated": regenerated,
+            },
+        )
         if not invalid_skus and not verdict.unretrieved_sources:
             return {"messages": _without_regeneration(messages)} if regenerated else {}
         if regenerated:

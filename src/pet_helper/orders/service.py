@@ -24,7 +24,12 @@ class ClockPort(Protocol):
 
 
 class Clock:
+    def __init__(self, fixed: date | None = None):
+        self._fixed = fixed
+
     def today(self) -> date:
+        if self._fixed is not None:
+            return self._fixed
         override = os.environ.get(TODAY_ENV)
         return date.fromisoformat(override) if override else date.today()
 
