@@ -1,5 +1,5 @@
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -61,10 +61,12 @@ class Assistant:
         guard: Guard,
         registry: ToolRegistry | None = None,
         tracer: TracerPort | None = None,
+        handler_factory: Callable[[], TraceCallbackHandler] = TraceCallbackHandler,
     ):
         selected_registry = registry if registry is not None else ToolRegistry()
         self._graph = build_graph(gateway, guard, selected_registry.tools)
         self._tracer: TracerPort = tracer if tracer is not None else NullTracer()
+        self._handler_factory = handler_factory
         self._turns: dict[str, int] = {}
 
     def snapshot(self, session_id: str) -> Mapping[str, Any]:
@@ -95,7 +97,7 @@ class Assistant:
         config: RunnableConfig = {
             "configurable": {"thread_id": session_id},
             "recursion_limit": RECURSION_LIMIT,
-            "callbacks": [TraceCallbackHandler()],
+            "callbacks": [self._handler_factory()],
         }
         try:
             state = self._graph.invoke({"user_text": text}, config)
@@ -150,6 +152,13 @@ def _load_kit(
     return PolicyIndex.load(policies_dir), Catalog(catalog_path), orders
 
 
+def build_kit_registry(
+    kit_dir: Path | None = None, today: date | None = None
+) -> ToolRegistry:
+    policies, catalog, orders = _load_kit(_resolve_kit_dir(kit_dir), today)
+    return build_tool_registry(policies=policies, catalog=catalog, orders=orders)
+
+
 def build_assistant(
     gateway: ModelGateway | None = None,
     registry: ToolRegistry | None = None,
@@ -157,18 +166,30 @@ def build_assistant(
     kit_dir: Path | None = None,
     today: date | None = None,
     trace_dir: Path | None = None,
+    handler_factory: Callable[[], TraceCallbackHandler] = TraceCallbackHandler,
 ) -> Assistant:
-    policies, catalog, orders = _load_kit(_resolve_kit_dir(kit_dir), today)
+    resolved_kit_dir = _resolve_kit_dir(kit_dir)
+    if registry is None:
+        policies, catalog, orders = _load_kit(resolved_kit_dir, today)
+        selected_registry = build_tool_registry(
+            policies=policies, catalog=catalog, orders=orders
+        )
+    else:
+        # a given registry already holds the policies and orders; the guard only needs the catalog
+        _, catalog_path, _ = _validate_kit_paths(resolved_kit_dir)
+        catalog = Catalog(catalog_path)
+        selected_registry = registry
     selected_gateway = gateway if gateway is not None else build_gateway()
-    selected_registry = (
-        registry
-        if registry is not None
-        else build_tool_registry(policies=policies, catalog=catalog, orders=orders)
-    )
     guard = Guard(catalog)
     selected_tracer = (
         Tracer(trace_dir, mask=guard.mask)
         if tracer is None and trace_dir is not None
         else tracer
     )
-    return Assistant(selected_gateway, guard, selected_registry, selected_tracer)
+    return Assistant(
+        selected_gateway,
+        guard,
+        selected_registry,
+        selected_tracer,
+        handler_factory,
+    )
