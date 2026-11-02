@@ -4,6 +4,9 @@ from copy import deepcopy
 from datetime import date
 
 import pytest
+
+from pet_helper.conversation import Reply
+from pet_helper.evals.cases import Check, EvalCase
 from pet_helper.evals.checks import (
     OUTCOMES,
     RunRecord,
@@ -14,9 +17,6 @@ from pet_helper.evals.checks import (
     evaluate_case,
     expected_doc_recall,
 )
-
-from pet_helper.conversation import Reply
-from pet_helper.evals.cases import Check, EvalCase
 from pet_helper.knowledge import PolicyHit
 
 KNOWN_SKUS = {"PX-0001", "PX-0002"}

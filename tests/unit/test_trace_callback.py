@@ -12,9 +12,9 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import tool
-from pet_helper.evals.budget import BudgetExceeded
 from pydantic import Field, ValidationError
 
+from pet_helper.evals.budget import BudgetExceeded
 from pet_helper.gateway import AnthropicGateway, OllamaGateway
 from pet_helper.orders import ORDER_NUMBER_PATTERN
 from pet_helper.trace import (

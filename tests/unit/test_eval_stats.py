@@ -1,6 +1,7 @@
 """The Wilson 95% interval the analysis and the label tooling share (pure, no model)."""
 
 import pytest
+
 from pet_helper.evals.stats import wilson_interval
 
 

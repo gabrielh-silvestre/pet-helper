@@ -3,11 +3,11 @@ from pathlib import Path
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
-from pet_helper.evals.fixtures import overlay_kit
 
 from pet_helper.catalog.models import load_products
 from pet_helper.conversation import build_assistant
 from pet_helper.evals.cases import load_cases
+from pet_helper.evals.fixtures import overlay_kit
 from pet_helper.gateway import FakeGateway
 from pet_helper.orders.api import FAILURE_ENV
 

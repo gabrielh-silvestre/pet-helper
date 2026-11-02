@@ -28,8 +28,8 @@ from typing import Any
 
 import pytest
 import yaml
-from pet_helper.evals.analysis import main
 
+from pet_helper.evals.analysis import main
 from tests.unit.test_eval_round import Plan, play, steady
 from tests.unit.test_eval_task import (
     _isolated_environment,  # noqa: F401  (autouse: keeps the environment clean)
