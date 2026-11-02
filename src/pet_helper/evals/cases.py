@@ -33,7 +33,6 @@ VALUED_CHECK_TYPES = frozenset(
         "must_include",
         "must_not_include",
         "expected_value",
-        "state",
     }
 )
 # the judge criteria, kept here so the pre-flight does not import the judge

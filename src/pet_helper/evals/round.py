@@ -16,6 +16,7 @@ from typing import Any, cast
 import anthropic
 from inspect_ai.log import EvalSample, read_eval_log
 from inspect_ai.model import ChatMessage
+from langchain_core.messages.ai import UsageMetadata
 
 from pet_helper.conversation import DEFAULT_KIT_DIR, system_prompt_sha256
 from pet_helper.evals import judge as judge_module
@@ -204,6 +205,15 @@ class _Collected:
     @property
     def not_run(self) -> int:
         return sum(case.outcomes.count("not_run") for case in self.cases)
+
+
+class _RoundBudget(RoundBudget):
+    """A call that ends without usage makes the cost unknown, so no other call may start."""
+
+    def on_error(self, usage: UsageMetadata | None) -> None:
+        if usage is None:
+            self.halted = True
+        super().on_error(usage)
 
 
 def _git(*args: str) -> str:
@@ -738,7 +748,7 @@ def run_round(
         max_samples = (
             ANTHROPIC_CONCURRENCY if provider == "anthropic" else OLLAMA_CONCURRENCY
         )
-    budget = RoundBudget(budget_usd)
+    budget = _RoundBudget(budget_usd)
 
     capped = False
     judge_error = None
@@ -850,7 +860,7 @@ def rejudge_round(
     if not confirm(estimate):
         return RoundResult(saved["round_id"], estimate, aborted=True)
 
-    budget = RoundBudget(budget_usd)
+    budget = _RoundBudget(budget_usd)
     within_budget, judge_error = _judge_sync(items, judge_client, log_path, budget)
     fields = {
         **saved,
@@ -881,7 +891,7 @@ def collect_round(
         raise ValueError(f"Round {saved['round_id']} has no pending batch")
     # the same runs in the same order as at submission, so the item ids match
     items = _judge_items(_read_runs(round_dir), {case.id: case for case in selection})
-    budget = RoundBudget(budget_usd)
+    budget = _RoundBudget(budget_usd)
     ended = _settle_batch(
         batch_client,
         batch_id,

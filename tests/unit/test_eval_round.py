@@ -1465,12 +1465,12 @@ def test_it_should_charge_an_unparsable_batch_reply_to_the_round_budget(
 ):
     settled: list[Decimal] = []
 
-    class SpyBudget(round_module.RoundBudget):
+    class SpyBudget(round_module._RoundBudget):
         def on_cost(self, actual: Decimal) -> None:
             settled.append(actual)
             super().on_cost(actual)
 
-    monkeypatch.setattr(round_module, "RoundBudget", SpyBudget)
+    monkeypatch.setattr(round_module, "_RoundBudget", SpyBudget)
 
     play(
         root,

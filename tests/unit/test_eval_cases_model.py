@@ -425,7 +425,6 @@ def test_it_should_not_import_inspect_ai(monkeypatch):
         "must_include",
         "must_not_include",
         "expected_value",
-        "state",
     ],
 )
 def test_it_should_reject_a_check_that_compares_terms_without_a_value(check_type):
