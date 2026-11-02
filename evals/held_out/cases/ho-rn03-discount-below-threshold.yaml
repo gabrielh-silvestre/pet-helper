@@ -1,0 +1,27 @@
+id: ho-rn03-discount-below-threshold
+suite: capability
+rule: RN03
+today: "2026-11-03"
+turns:
+  - "Boa tarde, meu CPF é 00000000353. O pedido PED-10006 passou de R$ 249 e eu moro em Goiás. Por que cobraram frete? Não era para ser grátis?"
+checks:
+  - type: tool_called
+    value: get_order
+    args:
+      order_number: PED-10006
+  - type: mentions_order
+    value: PED-10006
+  - type: cites_source
+    value: frete.md
+  - type: expected_value
+    value: ["224,80", "224.80"]
+  - type: must_not_include
+    value: ["o frete é grátis para o seu pedido", "o seu pedido tem frete grátis", "tem direito ao frete grátis", "vou estornar o frete"]
+expected_doc: frete.md
+judge:
+  - tone
+behaviors:
+  - source_citation
+  - rn_calculable
+  - escalation_not_needed
+expected_outcome: shipping_charged
