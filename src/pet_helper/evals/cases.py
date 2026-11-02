@@ -22,6 +22,22 @@ CHECK_TYPES = frozenset(
         "state",
     }
 )
+# these compare the reply with the terms in `value`, so an empty value is a mistake
+VALUED_CHECK_TYPES = frozenset(
+    {
+        "cites_source",
+        "mentions_order",
+        "no_other_customer_data",
+        "tool_called",
+        "tool_not_called",
+        "must_include",
+        "must_not_include",
+        "expected_value",
+        "state",
+    }
+)
+# the judge criteria, kept here so the pre-flight does not import the judge
+JUDGE_CRITERIA = ("tone", "escalation_judgment", "dont_know_accuracy")
 # these look at the whole conversation, so a turn makes no sense on them
 TURNLESS_CHECK_TYPES = frozenset(
     {
@@ -125,6 +141,30 @@ def _check_errors(check: Mapping[str, Any]) -> list[str]:
             errors.append("unknown_tool")
         elif not set(check.get("args") or ()) <= params:
             errors.append("unknown_tool_arg")
+    # a term check without terms passes on nothing (all of an empty list), which hides a typo
+    if check_type in VALUED_CHECK_TYPES and not check.get("value"):
+        errors.append("missing_value")
+    return errors
+
+
+def _judge_errors(entry: str | Mapping[str, Any], turns: int) -> list[str]:
+    errors = []
+    if isinstance(entry, Mapping):
+        if not set(entry) <= set(JudgeEntry.model_fields):
+            errors.append("unknown_key")
+        criterion, turn = entry.get("criterion"), entry.get("turn")
+    else:
+        criterion, turn = entry, None
+    if criterion not in JUDGE_CRITERIA:
+        errors.append("unknown_judge_criterion")
+    if (
+        turn is not None
+        and turns
+        and not (isinstance(turn, int) and 1 <= turn <= turns)
+    ):
+        errors.append("judge_turn_out_of_range")
+    elif turn is None and criterion == "dont_know_accuracy" and turns > 1:
+        errors.append("judge_turn_required")
     return errors
 
 
@@ -137,10 +177,7 @@ def validate_structure(raw: Mapping[str, Any]) -> list[str]:
     if not _is_valid_today(raw.get("today")):
         errors.append("bad_today")
     for entry in raw.get("judge") or []:
-        if isinstance(entry, Mapping) and not set(entry) <= set(
-            JudgeEntry.model_fields
-        ):
-            errors.append("unknown_key")
+        errors.extend(_judge_errors(entry, len(raw.get("turns") or [])))
     for check in raw.get("checks") or []:
         errors.extend(_check_errors(check))
     return list(dict.fromkeys(errors))

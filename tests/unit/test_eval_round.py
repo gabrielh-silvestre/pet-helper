@@ -49,7 +49,7 @@ from pet_helper.evals.round import (
 from pet_helper.gateway import DEFAULT_ANTHROPIC_MODEL, AnthropicGateway, FakeGateway
 from pet_helper.gateway.config import FALLBACK_ENV
 from pet_helper.orders.api import FAILURE_ENV
-from pet_helper.trace import cost_usd, find_raw_pii
+from pet_helper.trace import UnknownPriceError, cost_usd, find_raw_pii
 from pet_helper.trace.tracer import CONTENT_ENV
 from tests.unit.test_eval_task import (
     CASES_DIR,
@@ -77,6 +77,7 @@ COLUMNS = [
     "failed_checks",
     "unable_runs",
     "unable_reasons",
+    "error_runs",
 ]
 TURNS = ("Cadê meu pedido?", "Quero saber o prazo de devolução.")
 SCRIPTS: dict[str, list[Any]] = {
@@ -943,7 +944,15 @@ def test_it_should_fill_the_runner_columns_of_a_case_row(root):
         "failed_checks": "",
         "unable_runs": "1",
         "unable_reasons": "off_script:cpf",
+        "error_runs": "0",
     }
+
+
+def test_it_should_write_the_errored_runs_of_a_case_to_its_row(root):
+    play(root, [steady()], Plan(["ok", "ok", "error"]))
+
+    [row] = read_rows(root)
+    assert row["error_runs"] == "1"
 
 
 def test_it_should_write_the_contract_fields_to_round_json(root):
@@ -1456,12 +1465,12 @@ def test_it_should_charge_an_unparsable_batch_reply_to_the_round_budget(
 ):
     settled: list[Decimal] = []
 
-    class SpyBudget(round_module._RoundBudget):
+    class SpyBudget(round_module.RoundBudget):
         def on_cost(self, actual: Decimal) -> None:
             settled.append(actual)
             super().on_cost(actual)
 
-    monkeypatch.setattr(round_module, "_RoundBudget", SpyBudget)
+    monkeypatch.setattr(round_module, "RoundBudget", SpyBudget)
 
     play(
         root,
@@ -1671,3 +1680,30 @@ def test_it_should_not_fall_back_to_another_model_when_the_provider_fails(root):
     play(root, [solo("c0")], StubProvider(status=503, fallback=fallback), runs=1)
 
     assert fallback.calls == []
+
+
+# the judge price pre-flight
+
+
+def test_it_should_refuse_an_unpriced_judge_before_asking_for_confirmation(root):
+    judge = JudgeStub()
+    judge.model = "claude-mystery-9"
+    asked: list[Estimate] = []
+
+    with pytest.raises(UnknownPriceError):
+        play(
+            root,
+            [make_case("judged", judge=["tone"])],
+            Gateways(),
+            runs=1,
+            judge_client=judge,
+            confirm=lambda estimate: asked.append(estimate) or True,
+        )
+
+    assert asked == [] and not (root / "round-1").exists()
+
+
+def test_it_should_not_check_the_judge_price_when_the_round_runs_without_a_judge(root):
+    result = play(root, [steady()], Plan(["ok", "ok", "ok"]), judge="none")
+
+    assert result.round_id == "round-1"

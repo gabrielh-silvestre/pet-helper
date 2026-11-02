@@ -26,7 +26,7 @@ from pet_helper.gateway import (
     build_gateway,
     resolve_provider,
 )
-from pet_helper.trace import find_raw_pii
+from pet_helper.trace import UnknownPriceError, find_raw_pii
 
 if TYPE_CHECKING:
     # the runner and the judge import inspect_ai, which loading the CLI must not do
@@ -110,7 +110,7 @@ def run(args: argparse.Namespace, environment: EvalEnvironment | None) -> int:
         return _EXIT_USAGE
     try:
         return _dispatch(args, environment or default_environment())
-    except (KitError, ModelConfigError) as exc:
+    except (KitError, ModelConfigError, UnknownPriceError) as exc:
         print(type(exc).__name__ if held_out else exc, file=sys.stderr)
         return 1
     except Exception as exc:
@@ -288,6 +288,9 @@ def _finish(result: "RoundResult", directory: Path, held_out: bool) -> int:
         print(json.dumps({"smoke": True, "runs": saved["runs"]}))
     for case in result.cases:
         print(f"{case.case_id} {case.k if held_out else case.k_display}")
+    # the k of a judged case is provisional until its verdicts are in; a count names no case
+    if pending := sum(case.judge_pending for case in result.cases):
+        print(f"judge pending for {pending} cases")
     if not held_out:
         if saved.get("batch_id"):
             print(

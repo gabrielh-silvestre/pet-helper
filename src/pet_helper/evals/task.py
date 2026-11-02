@@ -9,6 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+import anthropic
 from inspect_ai import Epochs, Task
 from inspect_ai import eval as inspect_eval
 from inspect_ai.dataset import Sample
@@ -49,7 +50,12 @@ from pet_helper.evals.judge import (
 from pet_helper.gateway import ModelGateway, ModelUnavailable
 from pet_helper.guard import Guard
 from pet_helper.knowledge import PolicyHit
-from pet_helper.trace import BudgetExceeded, TraceCallbackHandler, Tracer
+from pet_helper.trace import (
+    BudgetExceeded,
+    TraceCallbackHandler,
+    Tracer,
+    UnknownPriceError,
+)
 
 GatewayFactory = Callable[[EvalCase, int], ModelGateway]
 
@@ -200,12 +206,6 @@ def _masked(guard: Guard, value: Any) -> Any:
     return value
 
 
-def make_executor(max_samples: int, judge_slots: int) -> ThreadPoolExecutor:
-    return ThreadPoolExecutor(
-        max_workers=max_samples + judge_slots, thread_name_prefix="eval"
-    )
-
-
 def _score_of(
     outcome: str,
     failed_checks: list[str],
@@ -349,8 +349,17 @@ def eval_task(
                             "expected_doc_recall": {},
                         },
                     )
-                except JudgeReplyError:
-                    # the conversation is paid for: keep it, so `--rejudge` can read it again
+                except (
+                    JudgeReplyError,
+                    anthropic.APIError,
+                    UnknownPriceError,
+                ) as error:
+                    # the conversation is paid for: keep it, so `--rejudge` can read it again;
+                    # an API or price failure also stops the round, the rest would fail the same
+                    if not isinstance(error, JudgeReplyError):
+                        budget.halted = True
+                        budget.price_unknown |= isinstance(error, UnknownPriceError)
+                        stop.set()
                     return Score.unscored(
                         reason=JUDGE_UNPARSABLE,
                         metadata={

@@ -183,6 +183,29 @@ def test_it_should_mask_text_nested_in_dicts_and_lists(tmp_path):
     }
 
 
+def test_it_should_write_a_dated_model_id_without_masking_it(tmp_path, guard):
+    tracer = Tracer(tmp_path, mask=guard.mask)
+
+    tracer.event(
+        "model.call",
+        session_id="s1",
+        turn=1,
+        **{"gen_ai.response.model": "claude-haiku-4-5-20251001"},
+    )
+
+    [record] = _records(tmp_path / "s1.jsonl")
+    assert record["gen_ai.response.model"] == "claude-haiku-4-5-20251001"
+
+
+def test_it_should_still_mask_a_free_field_that_looks_like_a_model_id(tmp_path):
+    tracer = Tracer(tmp_path, mask=lambda text: text.replace("2025", "[masked]"))
+
+    tracer.event("model.call", session_id="s1", turn=1, note="claude-2025")
+
+    [record] = _records(tmp_path / "s1.jsonl")
+    assert record["note"] == "claude-[masked]"
+
+
 @pytest.mark.parametrize("raw", RAW_PII)
 def test_it_should_not_write_personal_data_masked_by_the_guard(tmp_path, guard, raw):
     tracer = Tracer(tmp_path, mask=guard.mask)

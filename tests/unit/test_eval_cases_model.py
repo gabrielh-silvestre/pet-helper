@@ -411,3 +411,66 @@ def test_it_should_not_import_inspect_ai(monkeypatch):
     module = importlib.import_module("pet_helper.evals.cases")
 
     assert module.load_cases is not None
+
+
+# the judge and value pre-flight
+
+
+@pytest.mark.parametrize(
+    "check_type",
+    [
+        "cites_source",
+        "mentions_order",
+        "no_other_customer_data",
+        "must_include",
+        "must_not_include",
+        "expected_value",
+        "state",
+    ],
+)
+def test_it_should_reject_a_check_that_compares_terms_without_a_value(check_type):
+    errors = eval_cases.validate_structure(with_checks({"type": check_type}))
+
+    assert "missing_value" in errors
+
+
+def test_it_should_reject_a_tool_check_without_a_value():
+    errors = eval_cases.validate_structure(with_checks({"type": "tool_called"}))
+
+    assert "missing_value" in errors
+
+
+def test_it_should_reject_a_judge_criterion_the_judge_does_not_know():
+    errors = eval_cases.validate_structure(valid_raw(judge=["politeness"]))
+
+    assert errors == ["unknown_judge_criterion"]
+
+
+def test_it_should_reject_a_judge_turn_beyond_the_turns_of_the_case():
+    raw = valid_raw(judge=[{"criterion": "tone", "turn": 3}])
+
+    errors = eval_cases.validate_structure(raw)
+
+    assert errors == ["judge_turn_out_of_range"]
+
+
+def test_it_should_reject_a_judge_turn_of_zero():
+    raw = valid_raw(judge=[{"criterion": "tone", "turn": 0}])
+
+    errors = eval_cases.validate_structure(raw)
+
+    assert errors == ["judge_turn_out_of_range"]
+
+
+def test_it_should_require_a_turn_for_dont_know_accuracy_in_a_multi_turn_case():
+    errors = eval_cases.validate_structure(valid_raw(judge=["dont_know_accuracy"]))
+
+    assert errors == ["judge_turn_required"]
+
+
+def test_it_should_accept_dont_know_accuracy_without_a_turn_in_a_single_turn_case():
+    raw = valid_raw(turns=["only turn"], judge=["dont_know_accuracy"])
+
+    errors = eval_cases.validate_structure(raw)
+
+    assert errors == []

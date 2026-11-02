@@ -61,7 +61,12 @@ class _ThreadReserves(threading.local):
 
 
 class RoundBudget:
+    """A call that ends without usage makes the cost unknown, so no other call may start."""
+
     def __init__(self, cap: Decimal):
+        self.cap = cap
+        self.halted = False
+        self.price_unknown = False
         self._cap = cap
         self._spent = Decimal(0)
         self._in_flight_total = Decimal(0)
@@ -71,6 +76,8 @@ class RoundBudget:
         self._lock = threading.Lock()
 
     def before_call(self, reserve: Decimal) -> None:
+        if self.halted:
+            raise BudgetExceeded("A call ended without usage, the round stopped")
         with self._lock:
             committed = self._spent + self._in_flight_total
             if committed + reserve > self._cap:
@@ -85,6 +92,8 @@ class RoundBudget:
         self._settle(actual)
 
     def on_error(self, usage: UsageMetadata | None) -> None:
+        if usage is None:
+            self.halted = True
         # priced at the judge model, the dearest in a round, so a cut call is never undercounted
         cost = cost_usd("anthropic", JUDGE_MODEL, usage) if usage else None
         self._settle(cost)

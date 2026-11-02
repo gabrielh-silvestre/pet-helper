@@ -138,7 +138,7 @@ As linhas `model.call` e `tool.call` levam também `span_id` e `parent_span_id`,
 
 ## Como rodar o eval
 
-A suíte tem 20 casos visíveis em `evals/cases/`, um YAML por caso, e cerca de 5 casos reservados que ficam fora do alcance dos agentes que corrigem o assistente. Cada caso roda 3 vezes, e um caso passa quando passa nas 3. Criar um caso novo é criar um arquivo.
+A suíte tem 20 casos visíveis em `evals/cases/`, um YAML por caso, e 5 casos reservados em `evals/held_out/cases/`, que um hook esconde dos agentes que corrigem o assistente (a pasta está versionada: o histórico do git fica como residual aceito, descrito em `docs/directives/loop-melhoria.md`). Cada caso roda 3 vezes, e um caso passa quando passa nas 3. Criar um caso novo é criar um arquivo.
 
 ```sh
 uv run pet-helper eval                                   # as duas suítes visíveis, juiz síncrono
@@ -335,6 +335,6 @@ O projeto foi feito com o Claude Code e subagentes. O dono decidiu produto e est
 
 - **Kit.** Os dados sintéticos foram gerados por IA a partir de prompts que ficam em `kit/PROMPTS.md`. A revisão crítica do que ela gerou, as armadilhas por caso e os temas deixados de fora de propósito estão em `kit/KIT.md`, e um script de validação confere contagens e coerência.
 - **Fluxo.** Cada unidade de trabalho passa por entrevista, plano, cadeira do dono, aprovação, entrega com TDD, revisão local e revisão do PR por um painel. Quem escreve os testes não escreve o código: o `test-engineer` escreve os testes que falham, e o `executor` nunca os edita.
-- **Guardas por hook.** Hooks do agente bloqueiam a edição de testes pelo executor e o acesso aos casos reservados, e rodam as checagens estáticas quando um subagente termina. Os casos reservados nascem de um fluxo isolado, em que o agente lê só os requisitos, o glossário e os dados do kit, e o dono aprova cada um.
+- **Guardas por hook.** Hooks do agente bloqueiam a edição de testes pelo executor e os caminhos diretos até os casos reservados (não o histórico do git, residual aceito), e rodam as checagens estáticas quando um subagente termina. Os casos reservados nascem de um fluxo isolado, em que o agente lê só os requisitos, o glossário e os dados do kit, e o dono aprova cada um.
 - **Avaliação.** Nada que chama o modelo real roda sozinho: as rodadas pagas são manuais, com estimativa, confirmação e teto de custo. As anotações de falha do critic são conferidas pelo dono antes de valerem.
 - **Decisões registradas.** As decisões de arquitetura e o raciocínio do plano ficam em `docs/architecture.md`, em `docs/specs/` e no registro do hexlog, não só nas conversas.

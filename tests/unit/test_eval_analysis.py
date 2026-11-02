@@ -46,6 +46,7 @@ COLUMNS = [
     "failed_checks",
     "unable_runs",
     "unable_reasons",
+    "error_runs",
 ]
 
 
@@ -60,6 +61,7 @@ def row(case_id: str, k: str = "3/3", **cells: str) -> dict[str, str]:
         "k_of_3": k,
         "cost_usd": "0.01",
         "unable_runs": "0",
+        "error_runs": "0",
         **cells,
     }
 
@@ -217,6 +219,29 @@ def test_it_should_put_an_unable_case_on_its_own_line_apart_from_the_categories(
     assert counts(out)["unable"] == 1
     assert counts(out)["total"] == 4
     assert counts(out)["(none)"] == 1
+
+
+def test_it_should_put_an_errored_case_on_its_own_line_apart_from_the_categories(
+    results, capsys
+):
+    rows = [*failed_rows(), row("f", "2/3", error_runs="1")]
+    directory = make_round(results, rows)
+
+    _, out, _ = run(capsys, "categories", directory / "cases.csv")
+
+    assert (counts(out)["error"], counts(out)["total"]) == (1, 4)
+    assert counts(out)["(none)"] == 1
+
+
+def test_it_should_read_a_cases_csv_written_before_the_error_runs_column(
+    results, capsys
+):
+    rows = [{k: v for k, v in row("a", "2/3").items() if k != "error_runs"}]
+    directory = make_round(results, rows)
+
+    code, out, _ = run(capsys, "categories", directory / "cases.csv")
+
+    assert (code, counts(out)["(none)"]) == (0, 1)
 
 
 def test_it_should_skip_a_rerun_with_k_of_n_columns(results, capsys):

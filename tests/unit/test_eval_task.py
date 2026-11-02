@@ -32,7 +32,7 @@ from pet_helper.evals.budget import (
 )
 from pet_helper.evals.cases import EvalCase, load_cases, to_sample_kwargs
 from pet_helper.evals.judge import DEFAULT_JUDGE_MODEL, current_verdicts
-from pet_helper.evals.task import eval_task, make_executor, run_eval
+from pet_helper.evals.task import eval_task, run_eval
 from pet_helper.gateway import (
     AnthropicGateway,
     FakeGateway,
@@ -41,12 +41,13 @@ from pet_helper.gateway import (
 )
 from pet_helper.guard import Guard
 from pet_helper.orders.api import FAILURE_ENV
-from pet_helper.trace import BudgetExceeded
+from pet_helper.trace import BudgetExceeded, UnknownPriceError
 
 ROOT = Path(__file__).resolve().parents[2]
 KIT = ROOT / "kit"
 CASES_DIR = ROOT / "evals" / "cases"
 SLEEP = 0.4
+REQUEST = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
 CPF = re.compile(r"\d{3}\.\d{3}\.\d{3}-\d{2}")
 OWNER_TURN = "Meu CPF é 000.000.001-91. Cadê o pedido PED-10001?"
 POLICY_REPLY = "Você pode devolver em 7 dias.\nFonte: Troca e devolução"
@@ -273,6 +274,10 @@ def make_case(
     return EvalCase.model_validate(
         {"id": case_id, "today": "2026-11-03", "turns": list(turns), **fields}
     )
+
+
+def make_executor(max_samples: int, judge_slots: int) -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_samples + judge_slots, thread_name_prefix="eval")
 
 
 def run_round(
@@ -621,16 +626,17 @@ def test_it_should_feed_the_assistant_the_raw_turn_not_the_masked_sample_input(
 # real parallelism
 
 
-def test_it_should_run_eight_samples_in_less_than_three_times_one_sample(round_dir):
+def test_it_should_run_eight_samples_at_the_same_time(round_dir):
     Guard(Catalog(KIT / "catalog.csv")).mask("warm up the masking engines")
-    gateways = Gateways(delay=SLEEP)
+    # every gateway waits for the other seven: serialized samples would break the barrier
+    barrier = threading.Barrier(8, timeout=5)
+    gateways = Gateways(barrier=barrier)
     cases = [make_case(f"p{i}") for i in range(8)]
 
-    run_round(round_dir, cases, gateways, runs=1, max_samples=8)
+    log = run_round(round_dir, cases, gateways, runs=1, max_samples=8)
 
-    spans = [s for probe in gateways.probes.values() for s in probe.spans]
-    assert len(spans) == 8
-    assert max(end for _, end in spans) - min(start for start, _ in spans) < 3 * SLEEP
+    assert not barrier.broken
+    assert [outcome_of(sample) for sample in log.samples or []].count("error") == 0
 
 
 def test_it_should_write_a_well_formed_trace_file_for_each_of_eight_parallel_samples(
@@ -876,6 +882,51 @@ def test_it_should_make_the_epoch_an_error_when_the_judge_client_raises(round_di
     [sample] = epochs_of(log, "judged")
     assert outcome_of(sample) == "error"
     assert not any(s.value == CORRECT for s in (sample.scores or {}).values())
+
+
+@pytest.mark.parametrize(
+    ("judge", "price_unknown"),
+    [
+        (JudgeStub(error=anthropic.APIConnectionError(request=REQUEST)), False),
+        (JudgeStub(error=UnknownPriceError("No price for anthropic/x")), True),
+    ],
+    ids=["api_error", "unknown_price"],
+)
+def test_it_should_keep_the_conversation_and_stop_the_round_when_the_judge_call_fails(
+    round_dir, judge, price_unknown
+):
+    case = make_case("judged", judge=["tone"])
+    budget = RoundBudget(Decimal(5))
+
+    log = run_round(round_dir, [case], Gateways(), runs=1, judge=judge, budget=budget)
+
+    score = score_of(epochs_of(log, "judged")[0])
+    assert score.metadata["reason"] == "judge:unparsable"
+    assert score.metadata["outcome"] in ("pass", "fail")
+    assert (budget.halted, budget.price_unknown) == (True, price_unknown)
+
+
+def test_it_should_leave_the_other_runs_not_run_after_the_judge_call_fails(round_dir):
+    cases = [make_case(f"c{i}", judge=["tone"]) for i in range(4)]
+    judge = JudgeStub(error=anthropic.APIConnectionError(request=REQUEST))
+
+    log = run_round(round_dir, cases, Gateways(), runs=1, max_samples=1, judge=judge)
+
+    outcomes = [outcome_of(sample) for sample in log.samples or []]
+    assert outcomes.count("not_run") >= 1 and "error" not in outcomes
+
+
+def test_it_should_leave_a_run_not_run_when_the_judge_budget_is_exceeded(round_dir):
+    case = make_case("judged", judge=["tone"])
+    judge = JudgeStub(error=BudgetExceeded("cap reached"))
+
+    log = run_round(round_dir, [case], Gateways(), runs=1, judge=judge)
+
+    score = score_of(epochs_of(log, "judged")[0])
+    assert (score.metadata["outcome"], score.metadata["reason"]) == (
+        "not_run",
+        "budget",
+    )
 
 
 def test_it_should_reserve_the_worst_case_of_the_configured_judge_model(round_dir):

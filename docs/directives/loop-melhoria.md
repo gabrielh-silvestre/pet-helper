@@ -64,7 +64,7 @@ Como uma rodada de eval vira uma mudança aceita no assistente. Cada volta do lo
 ## Casos reservados
 
 - Cerca de 5 dos casos de eval são reservados e cobrem RN01 a RN04, "não sei" e um caso adversarial.
-- Os agentes que corrigem o assistente não leem os casos reservados; um hook bloqueia a leitura.
+- Os agentes que corrigem o assistente não leem os casos reservados: um hook bloqueia os caminhos diretos (leitura, busca, listagem, `git grep`, `git show`, `git log -p` e `git diff` entre revisões sem pathspec, ferramentas hospedadas com caminho). Residual aceito: a pasta está versionada, então o histórico do git (o PR que a criou e o merge commit de `main`) continua alcançável por ferramentas hospedadas que não recebem caminho; o compromisso é de processo, não de cofre.
 - Os casos reservados rodam no passo de aceitar ou rejeitar e uma vez na baseline, sempre por script e sem leitura por agente. A baseline não os consome, porque nenhuma correção foi feita olhando para eles, e vira a referência da primeira aceitação.
 - Falha de caso reservado na baseline não o consome nem o troca; a troca da última linha desta seção vale só para falha revelada no passo de aceitar ou rejeitar.
 - Caso reservado que estava em 3 de 3 na baseline e cai abaixo disso é caso de regressão decisivo, com as 10 execuções sob o mesmo sigilo.

@@ -15,8 +15,10 @@ import yaml
 from inspect_ai.log import read_eval_log, write_eval_log
 
 from pet_helper.cli import EvalEnvironment, main
+from pet_helper.conversation import KitError
 from pet_helper.evals.judge import current_verdicts
 from pet_helper.evals.round import GitState
+from pet_helper.gateway import ModelConfigError
 from pet_helper.orders.api import FAILURE_ENV
 from pet_helper.trace.tracer import CONTENT_ENV
 from tests.unit.test_cli import _set_input_lines
@@ -1023,3 +1025,122 @@ def test_it_should_not_write_inspect_logs_to_the_working_directory(
     eval_cli(monkeypatch, env, "--case", "steady", *argv)
 
     assert not (tmp_path / "logs").exists()
+
+
+# the pending judge
+
+
+def test_it_should_count_the_cases_whose_judge_is_pending_after_a_round_without_a_judge(
+    monkeypatch, env, capsys
+):
+    write_case(env.cases_dir, "judged", judge=["tone"])
+
+    eval_cli(monkeypatch, env, "--judge", "none")
+
+    assert "judge pending for 1 cases" in output_lines(capsys)
+
+
+def test_it_should_print_no_pending_judge_line_when_no_case_has_a_criterion(
+    monkeypatch, env, capsys
+):
+    eval_cli(monkeypatch, env, "--judge", "none")
+
+    assert not any("judge pending" in line for line in output_lines(capsys))
+
+
+def test_it_should_count_the_pending_judge_without_naming_the_case_in_a_held_out_run(
+    monkeypatch, held_out, env, capsys
+):
+    write_case(
+        env.held_out_cases_dir, "reserved-judged", suite="held-out", judge=["tone"]
+    )
+
+    eval_cli(
+        monkeypatch, env, "--held-out", "--case", "reserved-judged", "--judge", "none"
+    )
+
+    [line] = [line for line in output_lines(capsys) if "judge pending" in line]
+    assert line == "judge pending for 1 cases"
+
+
+# the pre-flight
+
+
+def test_it_should_refuse_a_case_whose_check_has_no_value_before_any_call(
+    monkeypatch, env, plan, capsys
+):
+    write_case(env.cases_dir, "valueless", checks=[{"type": "must_include"}])
+
+    code = eval_cli(monkeypatch, env, "--case", "valueless")
+
+    assert (code, plan.built) == (1, [])
+    assert "missing_value" in "\n".join(output_lines(capsys))
+
+
+def test_it_should_refuse_an_unpriced_judge_with_one_line_before_asking(
+    monkeypatch, env, plan, capsys
+):
+    unpriced = JudgeStub()
+    unpriced.model = UNPRICED_MODEL
+    write_case(env.cases_dir, "judged", judge=["tone"])
+
+    code = eval_cli(
+        monkeypatch, replace(env, judge_client=unpriced), "--case", "judged"
+    )
+
+    lines = output_lines(capsys)
+    assert (code, plan.built, len(lines)) == (1, [], 1)
+    assert UNPRICED_MODEL in lines[0]
+
+
+# the error paths
+
+
+@pytest.mark.parametrize(
+    "error", [KitError("leaky detail"), ModelConfigError("leaky detail")]
+)
+def test_it_should_print_only_the_class_name_of_a_config_error_in_a_held_out_run(
+    monkeypatch, held_out, env, capsys, error
+):
+    def fail():
+        raise error
+
+    code = eval_cli(monkeypatch, replace(env, git_state=fail), "--held-out")
+
+    assert (code, output_lines(capsys)[-1]) == (1, type(error).__name__)
+
+
+def test_it_should_print_the_message_of_a_config_error_in_a_visible_run(
+    monkeypatch, env, capsys
+):
+    def fail():
+        raise ModelConfigError("leaky detail")
+
+    code = eval_cli(monkeypatch, replace(env, git_state=fail), "--case", "steady")
+
+    assert (code, output_lines(capsys)[-1]) == (1, "leaky detail")
+
+
+def test_it_should_let_an_unexpected_error_through_in_a_visible_run(monkeypatch, env):
+    def fail():
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        eval_cli(monkeypatch, replace(env, git_state=fail), "--case", "steady")
+
+
+def test_it_should_refuse_to_collect_a_round_that_does_not_exist(
+    monkeypatch, env, capsys
+):
+    code = eval_cli(monkeypatch, env, "--collect", "no-such-round")
+
+    assert (code, output_lines(capsys)) == (1, ["Unknown round: no-such-round"])
+
+
+def test_it_should_refuse_to_collect_a_round_without_a_pending_batch(
+    monkeypatch, env, pending_round, capsys
+):
+    code = eval_cli(monkeypatch, env, "--collect", pending_round.name)
+
+    assert code == 1
+    assert "no pending batch" in output_lines(capsys)[-1]

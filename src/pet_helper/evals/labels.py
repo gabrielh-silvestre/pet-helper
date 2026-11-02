@@ -161,11 +161,9 @@ def _floor(labels: Path, *, required: bool) -> dict[str, dict[str, float]]:
 def _open_round(directory: Path) -> None:
     if _HELD_OUT in directory.resolve().parts:
         raise _Refused(f"{directory}: a held-out round is never labelled")
-    info = directory / "round.json"
-    if not info.is_file():
+    # a pending judge does not matter here: every command reads transcripts, never round verdicts
+    if not (directory / "round.json").is_file():
         raise _Refused(f"{directory}: not a round directory")
-    if json.loads(info.read_text(encoding="utf-8"))["judge_pending"]:
-        raise _Refused(f"{directory}: the judge is pending, collect it first")
 
 
 # seed
@@ -407,7 +405,9 @@ def _judge_batch(
     for item_id, (text, usage) in collection.completions.items():
         try:
             verdict = verdict_from_reply(text, usage, client.model)
-        except JudgeReplyError:
+        except JudgeReplyError as error:
+            # the reply was billed even though it cannot be read
+            cost += (error.cost or Decimal(0)) * BATCH_PRICE_FACTOR
             continue
         except _STOPS as error:
             stop = str(error)

@@ -16,16 +16,17 @@ from typing import Any, cast
 import anthropic
 from inspect_ai.log import EvalSample, read_eval_log
 from inspect_ai.model import ChatMessage
-from langchain_core.messages.ai import UsageMetadata
 
 from pet_helper.conversation import DEFAULT_KIT_DIR, system_prompt_sha256
 from pet_helper.evals import judge as judge_module
 from pet_helper.evals.budget import (
     BATCH_PRICE_FACTOR,
+    JUDGE_INPUT_LIMIT_TOKENS,
     JUDGE_MAX_TOKENS,
     BudgetExceeded,
     RoundBudget,
     batch_reserve_usd,
+    worst_case_usd,
 )
 from pet_helper.evals.cases import EvalCase, JudgeEntry
 from pet_helper.evals.judge import (
@@ -53,7 +54,6 @@ from pet_helper.evals.task import (
     GatewayFactory,
     _with_judge_verdicts,
     eval_task,
-    make_executor,
     run_eval,
 )
 from pet_helper.gateway import (
@@ -90,6 +90,7 @@ _COLUMNS = (
     "failed_checks",
     "unable_runs",
     "unable_reasons",
+    "error_runs",
 )
 # the analysis writes these cells; a recomputation of the round keeps them
 _ANALYSIS_COLUMNS = ("first_failure_note", "category", "human_label")
@@ -203,26 +204,6 @@ class _Collected:
     @property
     def not_run(self) -> int:
         return sum(case.outcomes.count("not_run") for case in self.cases)
-
-
-class _RoundBudget(RoundBudget):
-    """A call that ends without usage makes the cost unknown, so no other call may start."""
-
-    def __init__(self, cap: Decimal):
-        super().__init__(cap)
-        self.cap = cap
-        self.halted = False
-        self.price_unknown = False
-
-    def before_call(self, reserve: Decimal) -> None:
-        if self.halted:
-            raise BudgetExceeded("A call ended without usage, the round stopped")
-        super().before_call(reserve)
-
-    def on_error(self, usage: UsageMetadata | None) -> None:
-        if usage is None:
-            self.halted = True
-        super().on_error(usage)
 
 
 def _git(*args: str) -> str:
@@ -389,15 +370,6 @@ def _judge_costs(path: Path) -> dict[str, Decimal]:
     return costs
 
 
-def _verdict_of(record: Mapping[str, Any]) -> Verdict:
-    return Verdict(
-        record["critique"],
-        record["verdict"],
-        record["usage"],
-        Decimal(record["cost_usd"]),
-    )
-
-
 def _unjudged(run: _Run, verdicts: Mapping[tuple[str, str], Any]) -> bool:
     return run.outcome in _JUDGEABLE and any(
         (run.session_id, entry.criterion) not in verdicts for entry in run.entries
@@ -420,10 +392,15 @@ def _collect(directory: Path, runs: int) -> _Collected:
             judged = [
                 (
                     entry.criterion,
-                    _verdict_of(verdicts[run.session_id, entry.criterion]),
+                    Verdict(
+                        saved["critique"],
+                        saved["verdict"],
+                        saved["usage"],
+                        Decimal(saved["cost_usd"]),
+                    ),
                 )
                 for entry in run.entries
-                if (run.session_id, entry.criterion) in verdicts
+                if (saved := verdicts.get((run.session_id, entry.criterion)))
             ]
             final = _with_judge_verdicts(
                 run.outcome, run.failed_checks, run.reason, judged
@@ -505,6 +482,7 @@ def _write_cases(directory: Path, runs: int, cases: Sequence[CaseResult]) -> Non
                     "failed_checks": ";".join(case.failed_checks),
                     "unable_runs": str(case.unable_runs),
                     "unable_reasons": ";".join(case.unable_reasons),
+                    "error_runs": str(case.errors),
                 }
             )
 
@@ -525,8 +503,17 @@ def _finalize(directory: Path, runs: int, fields: Mapping[str, Any]) -> _Collect
     return collected
 
 
+def _judge_model(
+    judge: str, judge_client: JudgeClient | None, batch_client: BatchClient | None
+) -> str | None:
+    if judge == "none":
+        return None
+    client = judge_client if judge == "sync" else batch_client
+    return client.model if client is not None else judge_module._resolve_model()
+
+
 def _stop(
-    budget: _RoundBudget,
+    budget: RoundBudget,
     collected: _Collected,
     capped: bool,
     directory: Path,
@@ -591,7 +578,7 @@ def _judge_sync(
     items: Sequence[tuple[Judged, JudgeEntry]],
     client: JudgeClient,
     log_path: Path,
-    budget: _RoundBudget,
+    budget: RoundBudget,
 ) -> tuple[bool, anthropic.APIError | None]:
     failures: list[anthropic.APIError] = []
     failed = threading.Event()
@@ -633,7 +620,7 @@ def _settle_batch(
     batch_id: str,
     ids: Mapping[str, tuple[Judged, JudgeEntry]],
     log_path: Path,
-    budget: _RoundBudget,
+    budget: RoundBudget,
     wait_seconds: float,
     poll_seconds: float,
 ) -> bool:
@@ -725,6 +712,10 @@ def run_round(
 ) -> RoundResult:
     if reference_round is not None and len(selection) != 1:
         raise ValueError("A decisive rerun takes exactly one case")
+    judge_model = _judge_model(judge, judge_client, batch_client)
+    if judge_model is not None:
+        # an unpriced judge must fail here, before the conversations are paid for
+        worst_case_usd(judge_model, JUDGE_INPUT_LIMIT_TOKENS, JUDGE_MAX_TOKENS)
     estimate = _estimate(results_root, selection, runs, judge)
     if not confirm(estimate):
         return RoundResult(round_id, estimate, aborted=True)
@@ -747,12 +738,17 @@ def run_round(
         max_samples = (
             ANTHROPIC_CONCURRENCY if provider == "anthropic" else OLLAMA_CONCURRENCY
         )
-    budget = _RoundBudget(budget_usd)
+    budget = RoundBudget(budget_usd)
 
     capped = False
     judge_error = None
     batch_id = None
-    with _round_environment(), make_executor(max_samples, JUDGE_SLOTS) as pool:
+    with (
+        _round_environment(),
+        ThreadPoolExecutor(
+            max_samples + JUDGE_SLOTS, thread_name_prefix="eval"
+        ) as pool,
+    ):
         made = 0
         count = runs
         while True:
@@ -800,7 +796,6 @@ def run_round(
             # the submission failed: the conversations are paid for, so the round is saved pending
             judge_error = error
 
-    judge_model = (inline_judge or batch).model if inline_judge or batch else None
     fields = {
         "round_id": round_id,
         "git_sha": git.sha,
@@ -855,7 +850,7 @@ def rejudge_round(
     if not confirm(estimate):
         return RoundResult(saved["round_id"], estimate, aborted=True)
 
-    budget = _RoundBudget(budget_usd)
+    budget = RoundBudget(budget_usd)
     within_budget, judge_error = _judge_sync(items, judge_client, log_path, budget)
     fields = {
         **saved,
@@ -886,7 +881,7 @@ def collect_round(
         raise ValueError(f"Round {saved['round_id']} has no pending batch")
     # the same runs in the same order as at submission, so the item ids match
     items = _judge_items(_read_runs(round_dir), {case.id: case for case in selection})
-    budget = _RoundBudget(budget_usd)
+    budget = RoundBudget(budget_usd)
     ended = _settle_batch(
         batch_client,
         batch_id,

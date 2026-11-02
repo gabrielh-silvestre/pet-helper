@@ -22,6 +22,18 @@ _FREE_TEXT_FIELDS = frozenset(
 )
 # opaque ids from the runtime: masking could mangle a digit run that looks like a phone
 _SPAN_ID_FIELDS = ("span_id", "parent_span_id")
+# names chosen by us or by the provider, never customer text: a dated model id such as
+# claude-haiku-4-5-20251001 would otherwise lose its date to the phone mask
+_OPAQUE_FIELDS = frozenset(
+    {
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.model",
+        "gen_ai.response.finish_reasons",
+        "gen_ai.tool.name",
+        "error.type",
+    }
+)
 
 
 class TracerPort(Protocol):
@@ -68,6 +80,8 @@ class Tracer:
     def _sink_value(self, name: str, value: Any) -> Any:
         if not self._with_content and name in _FREE_TEXT_FIELDS:
             return _length_of(value)
+        if name in _OPAQUE_FIELDS:
+            return _map_strings(value, _truncate)
         return _map_strings(value, lambda text: _truncate(self._mask(text)))
 
     def event(self, kind: str, *, session_id: str, turn: int, **fields: Any) -> None:

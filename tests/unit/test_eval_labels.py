@@ -54,16 +54,18 @@ import pytest
 
 from pet_helper.evals import judge as judge_module
 from pet_helper.evals import labels as labels_module
+from pet_helper.evals.budget import BATCH_PRICE_FACTOR
 from pet_helper.evals.judge import (
     CRITERIA,
+    BatchCollection,
     FewShotExample,
     build_prompt,
     judge_prompt_sha256,
 )
 from pet_helper.evals.labels import main
 from pet_helper.orders.api import FAILURE_ENV
-from pet_helper.trace import UnknownPriceError
-from tests.unit.test_eval_judge import FakeBatchClient, FakeClient
+from pet_helper.trace import UnknownPriceError, cost_usd
+from tests.unit.test_eval_judge import USAGE, FakeBatchClient, FakeClient
 from tests.unit.test_eval_round import play
 from tests.unit.test_eval_task import (
     KIT,  # noqa: F401  (kept next to play for readers of the fixtures)
@@ -1014,6 +1016,28 @@ def test_it_should_resume_a_partial_batch_with_only_the_missing_items(pooled, cl
     assert {item.item_id for item in submitted} == missing
 
 
+class GarbledBatchClient(FakeBatchClient):
+    """Batch client whose first completion cannot be parsed, though it was billed."""
+
+    def collect(self, batch_id, item_ids) -> BatchCollection:
+        collection = super().collect(batch_id, item_ids)
+        first = next(iter(collection.completions))
+        return BatchCollection(
+            completions={**collection.completions, first: ("not json", USAGE)},
+            failed={},
+        )
+
+
+def test_it_should_charge_an_unreadable_batch_reply_like_a_readable_one(pooled, cli):
+    client = GarbledBatchClient()
+
+    _, out, _ = judge_batch(cli, pooled, "dev", client)
+
+    [submitted] = client.submitted
+    per_reply = cost_usd("anthropic", client.model, USAGE) * BATCH_PRICE_FACTOR
+    assert Decimal(out.split("cost US$ ")[1].split()[0]) == per_reply * len(submitted)
+
+
 def unpriced_after(monkeypatch, settled: int) -> None:
     """Makes the batch settle `settled` replies, then meet a model without a price."""
     real = labels_module.verdict_from_reply
@@ -1574,19 +1598,15 @@ def test_it_should_refuse_a_held_out_round_with_one_line_and_no_output(
     assert client.calls == [] and not labels_of(directory).exists()
 
 
-@pytest.mark.parametrize("command", COMMANDS)
-def test_it_should_refuse_a_round_with_a_judge_pending_with_one_line(
-    tmp_path, cli, command
-):
-    directory = refusable_round(tmp_path, held_out=False, pending=True)
-    client = FakeClient()
+def test_it_should_seed_a_round_whose_judge_is_still_pending(round_dir, cli):
+    info = round_dir / "round.json"
+    saved = json.loads(info.read_text(encoding="utf-8"))
+    info.write_text(json.dumps({**saved, "judge_pending": True}), encoding="utf-8")
 
-    code, out, err = cli(*command_line(command, directory, tmp_path), client=client)
+    code, _, err = cli("seed", round_dir)
 
-    assert code != 0
-    assert out == ""
-    assert one_line(err)
-    assert client.calls == [] and not labels_of(directory).exists()
+    assert (code, err) == (0, "")
+    assert (labels_of(round_dir) / "seeds.jsonl").is_file()
 
 
 # the command line

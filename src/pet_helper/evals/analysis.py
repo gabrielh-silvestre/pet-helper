@@ -40,10 +40,12 @@ def _read_table(path: Path) -> tuple[list[str], list[dict[str, str]]]:
 def _case_result(row: dict[str, str], runs: int) -> CaseResult:
     passes, made = (int(part) for part in row[f"k_of_{runs}"].split("/"))
     unable = int(row["unable_runs"])
+    errors = int(row.get("error_runs") or 0)
     outcomes = [
         *["pass"] * passes,
         *["unable"] * unable,
-        *["fail"] * max(0, made - passes - unable),
+        *["error"] * errors,
+        *["fail"] * max(0, made - passes - unable - errors),
         *["not_run"] * (runs - made),
     ]
     return CaseResult(
@@ -73,19 +75,23 @@ def _categories(cases_csv: Path) -> list[str]:
         return [f"(a rerun of {runs} runs has no categories)"]
     _, rows = _read_table(cases_csv)
     failed: Counter[str] = Counter()
-    unable = 0
+    unable = errors = 0
     for row in rows:
         result = _case_result(row, runs)
         if result.passed:
             continue
-        # a case that only lacks runs because they were unable is not a failure to categorise
-        if not result.failed_checks and result.unable_runs:
+        # a case that only lacks runs because they were unable, or because the
+        # infrastructure failed, is not a failure of the assistant to categorise
+        if not result.failed_checks and result.errors:
+            errors += 1
+        elif not result.failed_checks and result.unable_runs:
             unable += 1
         else:
             failed[row["category"] or "(none)"] += 1
     return [
         *(f"{name}: {count}" for name, count in sorted(failed.items())),
         f"unable: {unable}",
+        f"error: {errors}",
         f"total: {sum(failed.values())}",
     ]
 

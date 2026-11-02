@@ -1,7 +1,9 @@
 """Characterization of the Inspect AI behaviors the eval runner depends on (no real model)."""
 
 import asyncio
+import threading
 import time
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -17,14 +19,18 @@ USAGE = {"input_tokens": 11, "output_tokens": 7}
 
 
 class FakeJudge:
-    """Sync judge client that blocks like a network call."""
+    """Sync judge client that blocks like a network call, at a barrier when given one."""
 
-    def __init__(self) -> None:
+    def __init__(self, barrier: threading.Barrier | None = None) -> None:
         self.spans: list[tuple[float, float]] = []
+        self.barrier = barrier
 
     def grade(self, answer: str) -> str:
         start = time.monotonic()
-        time.sleep(SLEEP)
+        if self.barrier is not None:
+            self.barrier.wait()
+        else:
+            time.sleep(SLEEP)
         self.spans.append((start, time.monotonic()))
         return CORRECT
 
@@ -49,13 +55,19 @@ def scripted(calls: list[tuple[str, int]]):
 
 
 @solver
-def timed(spans: list[tuple[float, float]], mode: str):
+def timed(
+    spans: list[tuple[float, float]],
+    mode: str,
+    barrier: threading.Barrier | None = None,
+):
+    blocking = slow_sync if barrier is None else barrier.wait
+
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         start = time.monotonic()
         if mode == "thread":
-            await asyncio.to_thread(slow_sync)
+            await asyncio.to_thread(blocking)
         else:
-            slow_sync()
+            blocking()
         spans.append((start, time.monotonic()))
         return state
 
@@ -113,8 +125,12 @@ def accuracy_of(log: EvalLog) -> float:
     return log.results.scores[0].metrics["accuracy"].value
 
 
-def span_of(spans: list[tuple[float, float]]) -> float:
-    return max(end for _, end in spans) - min(start for start, _ in spans)
+def overlapping(spans: list[tuple[float, float]]) -> bool:
+    ordered = sorted(spans)
+    return any(
+        later_start < earlier_end
+        for (_, earlier_end), (later_start, _) in pairwise(ordered)
+    )
 
 
 def test_it_should_exclude_an_errored_sample_from_the_reduced_score_denominator(
@@ -242,12 +258,13 @@ def test_it_should_write_no_logs_directory_to_the_working_directory_with_an_expl
 
 def test_it_should_run_samples_in_parallel_when_the_solver_awaits_to_thread(tmp_path):
     spans: list[tuple[float, float]] = []
+    # every sample waits for the other seven: serialized samples would break the barrier
+    barrier = threading.Barrier(8, timeout=5)
     samples = [make_sample(f"s{i}") for i in range(8)]
 
-    run_task(tmp_path, samples, solver=timed(spans, "thread"), epochs=1)
+    run_task(tmp_path, samples, solver=timed(spans, "thread", barrier), epochs=1)
 
-    assert len(spans) == 8
-    assert span_of(spans) < 3 * SLEEP
+    assert len(spans) == 8 and not barrier.broken
 
 
 def test_it_should_serialize_samples_when_the_solver_calls_the_sync_function_directly(
@@ -259,17 +276,17 @@ def test_it_should_serialize_samples_when_the_solver_calls_the_sync_function_dir
     run_task(tmp_path, samples, solver=timed(spans, "direct"), epochs=1)
 
     assert len(spans) == 8
-    assert span_of(spans) >= 4 * SLEEP
+    assert not overlapping(spans)
 
 
 def test_it_should_not_serialize_samples_when_the_scorer_awaits_to_thread(tmp_path):
-    judge = FakeJudge()
+    barrier = threading.Barrier(8, timeout=5)
+    judge = FakeJudge(barrier)
     samples = [make_sample(f"s{i}", pass_epochs=3) for i in range(8)]
 
     run_task(tmp_path, samples, solver=scripted([]), scorer=verdict(judge), epochs=1)
 
-    assert len(judge.spans) == 8
-    assert span_of(judge.spans) < 3 * SLEEP
+    assert len(judge.spans) == 8 and not barrier.broken
 
 
 def test_it_should_expose_the_usage_a_scorer_writes_into_score_metadata(tmp_path):

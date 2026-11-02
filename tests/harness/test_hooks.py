@@ -17,13 +17,13 @@ CTX = "mcp__plugin_context-mode_context-mode__"
 OMC = "mcp__plugin_oh-my-claudecode_t__"
 
 
-def _run(command, payload, held_out=False):
-    env = {"CLAUDE_PROJECT_DIR": str(ROOT), "PATH": "/usr/bin:/bin"}
+def _run(command, payload, held_out=False, path="/usr/bin:/bin"):
+    env = {"CLAUDE_PROJECT_DIR": str(ROOT), "PATH": path}
     if held_out:
         env["PET_HELPER_HELD_OUT"] = "1"
     return subprocess.run(
-        ["sh", "-c", command],
-        input=json.dumps(payload),
+        ["/bin/sh", "-c", command],
+        input=payload if isinstance(payload, str) else json.dumps(payload),
         capture_output=True,
         text=True,
         env=env,
@@ -237,6 +237,39 @@ BLOCKED = _ids(
         "ctx-execute-find",
         _tool(f"{CTX}ctx_execute", language="shell", code="find . -name '*.yaml'"),
     ),
+    ("git-grep-without-pathspec", _bash("git grep -n x")),
+    ("git-grep-on-evals", _bash("git grep -n x -- evals")),
+    ("git-show-a-commit", _bash("git show a189cfd")),
+    ("git-show-with-stat", _bash("git --no-pager show --stat HEAD~1")),
+    ("git-log-with-patch", _bash("git log -p -- evals")),
+    ("git-log-short-patch-flag", _bash("git log -3p")),
+    ("git-diff-between-revisions", _bash("git diff main...HEAD")),
+    ("git-diff-in-another-checkout", _bash("git -C /w/pet-helper.x diff main HEAD")),
+    ("git-cat-file", _bash("git cat-file -p HEAD:evals")),
+    ("git-archive", _bash("git archive HEAD")),
+    ("rg-unrestricted", _bash("rg -uu x .")),
+    ("rg-no-ignore", _bash("rg --no-ignore x evals")),
+    ("rg-unrestricted-without-path", _bash("rg -n -u x")),
+    ("ls-recursive-on-evals", _bash("ls -R evals")),
+    ("ls-recursive-on-dot", _bash("ls -laR .")),
+    ("tree-on-evals", _bash("tree evals")),
+    ("tree-without-path", _bash("tree")),
+    ("glob-under-evals", _bash("cat evals/h*/cases/*")),
+    ("glob-star-under-evals", _bash("head evals/*/cases/x.yaml")),
+    ("pwd-prefixed-path", _bash("grep -rn x $PWD/evals")),
+    ("braced-pwd-prefixed-path", _bash("grep -rn x ${PWD}")),
+    ("dot-dot-path", _bash("grep -rn x ./evals/../evals")),
+    ("absolute-project-dir", _bash(f"grep -rn x {ROOT}")),
+    ("absolute-evals-of-another-checkout", _bash("find /w/pet-helper.x/evals")),
+    (
+        "github-file-contents",
+        _tool(
+            "mcp__github-official__get_file_contents",
+            owner="o",
+            repo="pet-helper",
+            path="evals/held_out/cases/x.yaml",
+        ),
+    ),
 )
 
 ALLOWED = _ids(
@@ -340,7 +373,68 @@ ALLOWED = _ids(
         ),
     ),
     ("python-repl-code-without-the-path", _tool(f"{OMC}python_repl", code="print(1)")),
+    ("git-grep-on-src", _bash("git grep -n x -- src tests")),
+    ("git-show-a-file-of-the-tree", _bash("git show HEAD:README.md")),
+    ("git-show-with-pathspec", _bash("git show HEAD -- src")),
+    ("git-log-without-patch", _bash("git log --oneline -5")),
+    ("git-log-patch-on-src", _bash("git log -p -- src/pet_helper")),
+    ("git-diff-of-the-working-tree", _bash("git diff")),
+    ("git-diff-cached", _bash("git diff --cached --stat")),
+    ("git-diff-with-pathspec", _bash("git diff main...HEAD -- src tests docs")),
+    ("git-status", _bash("git status --short")),
+    ("rg-on-src", _bash("rg -n x src")),
+    ("rg-honouring-the-ignore-file", _bash("rg -n x .")),
+    ("ls-on-evals", _bash("ls evals")),
+    ("ls-recursive-on-src", _bash("ls -R src")),
+    ("tree-on-src", _bash("tree src")),
+    ("glob-of-the-visible-cases", _bash("cat evals/cases/*.yaml")),
+    ("absolute-src-of-the-project", _bash(f"grep -rn x {ROOT}/src")),
+    (
+        "github-pull-request-metadata",
+        _tool(
+            "mcp__github-official__pull_request_read",
+            method="get",
+            owner="o",
+            repo="pet-helper",
+            pullNumber=7,
+        ),
+    ),
 )
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "WebFetch",
+        "mcp__github-official__get_file_contents",
+        "mcp__github-official__pull_request_read",
+        "mcp__gitnexus__query",
+    ],
+)
+def test_it_should_apply_the_held_out_hook_to_the_hosted_read_tools(tool_name):
+    assert re.fullmatch(HELD_OUT_MATCHER, tool_name)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tool_name": "Glob", "tool_input": {"glob": 1}},
+        {"tool_name": "Bash", "tool_input": ["not", "an", "object"]},
+        "not json at all",
+    ],
+)
+def test_it_should_block_when_the_held_out_filter_cannot_read_the_payload(payload):
+    result = _run(HELD_OUT, payload)
+
+    assert result.returncode == 2
+    assert "Held-out" in result.stderr
+
+
+def test_it_should_block_when_jq_is_missing_from_the_path():
+    result = _run(HELD_OUT, _bash("ls src"), path="/nonexistent")
+
+    assert result.returncode == 2
+    assert "Held-out" in result.stderr
 
 
 @pytest.mark.parametrize("payload", BLOCKED)
@@ -390,9 +484,18 @@ PAID_HOOK = next(
 )
 
 
-def _run_paid(payload, held_out=False):
+def _run_paid(payload, held_out=False, path="/usr/bin:/bin"):
     assert PAID_HOOK, "settings.json wires no PreToolUse hook that runs paid-command.jq"
-    return _run(PAID_HOOK["hooks"][0]["command"], payload, held_out=held_out)
+    return _run(PAID_HOOK["hooks"][0]["command"], payload, held_out=held_out, path=path)
+
+
+@pytest.mark.parametrize("payload", ["{", ""])
+def test_it_should_block_when_the_paid_filter_cannot_read_the_payload(payload):
+    assert _run_paid(payload).returncode == 2
+
+
+def test_it_should_block_a_shell_command_when_jq_is_missing_from_the_path():
+    assert _run_paid(_bash("ls src"), path="/nonexistent").returncode == 2
 
 
 @pytest.mark.parametrize(
