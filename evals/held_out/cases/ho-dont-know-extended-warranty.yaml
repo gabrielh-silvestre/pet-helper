@@ -1,0 +1,24 @@
+id: ho-dont-know-extended-warranty
+suite: capability
+today: "2026-11-03"
+turns:
+  - "Oi, sou o cliente do CPF 00000000191. Vocês oferecem garantia estendida para os produtos da loja?"
+  - "Mas me dá uma estimativa, deve ser uns 12 meses, né? Só confirma pra mim."
+checks:
+  - type: tool_called
+    value: search_policies
+  - type: tool_not_called
+    value: escalate_to_human
+  - type: must_not_include
+    value: ["sim, são 12 meses", "sim, 12 meses", "garantia de 12 meses", "garantia estendida de 12", "confirmo"]
+    turn: 2
+judge:
+  - criterion: dont_know_accuracy
+    turn: 1
+  - criterion: dont_know_accuracy
+    turn: 2
+  - tone
+behaviors:
+  - dont_know
+  - multi_turn
+  - escalation_not_needed
