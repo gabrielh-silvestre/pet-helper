@@ -4,16 +4,17 @@ Caminho de um trabalho, do pedido ao merge. A fronteira de quem decide está em 
 
 ## Macroetapas
 
-As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do projeto. O dono entra só na entrevista, no aval do fim da M1 e no merge.
+As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do projeto. O dono entra só na entrevista, no aval do fim da M1, nos passos pagos que o plano aprovado lista e no merge.
 
 | Macro | Comando | Etapas | Termina em |
 |---|---|---|---|
 | M1 pré-código | `/pre-code <objetivo>` | 1 a 3 | Pergunta ao dono: aprovar, pedir ajuste ou parar. Aprovar dispara a M2 |
-| M2 entrega | `/deliver <slug>` | 4 a 6 | PR em draft; abre a tab `<slug>-panel` do Herdr e dispara a M3 |
+| M2 entrega | `/deliver <slug>` | 4 a 6 | PR em draft; abre a tab `<slug>-panel` do Herdr e dispara a M3, salvo a pausa para os passos do dono (retome com `/deliver <slug>`) |
 | M3 painel | `/pr-panel <slug> <PR> <modo>` | 7 | Veredito postado sozinho no head final; o merge segue com o dono |
 
 - Cada macro pode ser chamada à mão com o slug; é assim que se retoma uma unidade parada.
-- Impasse (2 voltas esgotadas, hook barrando a mesma coisa, `ralph` sem convergir, critic sem decisão): a macro para e registra `impasse` no hexlog com fase, motivo e progresso, sem notificação.
+- Impasse (2 voltas esgotadas, hook barrando a mesma coisa, `ralph` sem convergir, critic sem decisão) ou pausa planejada para os passos do dono, que não é falha: a macro para e registra `impasse` no hexlog com fase, motivo e progresso, sem notificação.
+- Passos do dono: quando `docs/specs/<slug>/plan.md` tem a seção `## Passos do dono`, a M2 para depois do PR em draft e antes da etapa 7, registra `impasse` com o motivo `owner steps pending`, sem mudar a fase, e mostra os comandos da seção. Os passos rodam na branch, cada comando pago no terminal do dono; a sessão principal prepara, lê os resultados visíveis e commita. Casos reservados gerados nesses passos chegam à `main` por um PR próprio, que o dono mergeia depois de aprovar cada caso, e entram na branch por merge da `main`, para que o diff que o painel lê não os mostre. Quando o dono avisa que terminou e o head está enviado, `/deliver <slug>` retoma na etapa 7.
 - Achado de revisão que vira decisão de produto vai ao critic da cadeira, que decide; a macro aplica e registra no PR e no hexlog, e o dono revê no merge.
 - Depois das correções de cada revisão, o `code-simplifier` roda de novo sobre o trecho corrigido, só relatando; reprovação volta ao `executor`, no máximo 2 vezes.
 
@@ -36,14 +37,20 @@ As 8 etapas abaixo rodam em três macroetapas encadeadas, cada uma uma skill do 
    - O `test-engineer` nunca é o `executor`: quem escreve o código não cria teste.
    - A cada `.py` editado, um hook roda o lint com correção automática e devolve ao agente só o que não corrigiu.
    - Toda vez que o `executor` termina, um hook roda a verificação completa (lint, formatação, tipos e a suíte sem modelo com cobertura) antes do `code-simplifier`; falha volta ao `executor` sem contar nas voltas do `code-simplifier`.
+   <!-- Pausado em 30/10/2026: a cota do agy acabou no meio da unidade assistant e o dono escolheu seguir só com subagentes do Claude. Para reativar, troque os dois itens acima por este.
+   - Os dois rodam no `agy` (Gemini 4 Argon High, por `omc ask antigravity --agent-prompt`), não como subagentes. Os hooks não alcançam o `agy`, então a sessão principal faz as checagens deles depois de cada chamada: o `test-engineer` só pode ter mexido em `tests/`, o `executor` não pode ter mexido em `tests/`, e depois do `executor` roda a verificação completa (lint, formatação, tipos e a suíte sem modelo com cobertura) antes do `code-simplifier`. Falha volta ao `agy` sem contar nas voltas do `code-simplifier`; a terceira falha da mesma checagem vira impasse. Cada chamada tem teto de 1 h só como rede de segurança; um monitor avisa quando o log do `agy` fica 10 min parado, o que separa chamada lenta de chamada travada. O comando exato está em [deliver/SKILL.md](../../.claude/skills/deliver/SKILL.md).
+   -->
+
    - O `code-simplifier` roda ao fechar cada spec, quando todos os behaviors dela estão verdes, sobre o código de teste e de produção que entrou.
    - Reprovação do `code-simplifier` volta ao `executor`, os testes rodam de novo e o `code-simplifier` reavalia, no máximo 2 vezes; depois disso o impasse vai ao dono.
+   - Cada história do PRD vira um commit na worktree, depois do `code-simplifier` e de todo ajuste que ele apontou; nunca um commit com teste vermelho.
    - O loop segue spec a spec até a entrega final.
 5. **Revisão local.** Por `/review-pr --normal`, apontando para a worktree, antes de existir PR; levanta achados nas severidades da tabela abaixo.
-6. **Ajustes e PR.** O executor aplica todos os achados da revisão local, MINOR inclusive, e a unidade vira um commit e um PR em draft.
+6. **Ajustes e PR.** O executor aplica todos os achados da revisão local, MINOR inclusive, num commit próprio, e a branch, com um commit por história mais esse, vira um PR em draft.
 7. **Revisão do PR.** Por `/review-pr --auto` no PR aberto, rodado por um agente novo e isolado numa tab nova do Herdr, dono exclusivo da worktree até terminar.
    - Modo `--panel --normal` se a entrega toca regra de negócio (RN01-RN04), acesso a Order ou identidade do Customer ([ADR 0001](../adr/0001-order-access-by-cpf-and-order-number.md)), o prompt do modelo, ou mais de 600 linhas de produção; senão `--normal`. Na dúvida, painel. A M2 escolhe e registra o motivo.
    - BLOCKING, URGENT e NORMAL são corrigidos sozinhos num commit `fix:` único; os MINOR vão para uma issue de follow-up que aponta para o PR.
+   - Antes do veredito, a M3 confere `git diff <SHA medido>..HEAD -- src/`, com o SHA do `round.json` da baseline; se não estiver vazio, o commit de correções põe no README e no corpo do PR a linha "baseline medida em <sha>, antes de N commits que mudaram `src/`". Rodar a baseline de novo é decisão do dono e pede veredito novo no head que resultar.
    - O veredito sai por `pr-verdict --auto`, preso ao SHA do último push.
 8. **Merge.** Só o dono faz o merge, como merge commit; o fluxo nunca faz merge sozinho.
 
@@ -83,6 +90,7 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 
 - Os testes não rodam no `pre-commit`, já que o commit fecha uma unidade de trabalho (a spec) e nunca um passo do TDD: o vermelho fica fora do histórico, e a saída dele vai para o hexlog e o PR.
 - Nada que chame o modelo real roda de forma automática: nem gancho do git, nem CI, nem agendamento.
+- Nenhum agente roda um comando pago (`pet-helper eval`, `judge smoke`, `labels judge-pool`): o gancho `paid-command.jq` barra a chamada em qualquer sessão, e quem roda é o dono, no próprio terminal.
 - O projeto não usa teste de mutação.
 - Gancho local pode ser pulado; o CI é a barreira que não depende da máquina de quem commita.
 
@@ -93,6 +101,9 @@ Duas camadas: a compartilhada vale para humano e agente; a de agentes é imposta
 - Bloqueio de atalhos que pulam verificação (`--no-verify` e variáveis que desligam ganchos).
 - Só o dono edita `docs/directives/estrategia.md`.
 - O `executor` não altera os testes do `test-engineer`, nem por ferramenta de edição nem pelo shell.
+<!-- Pausado em 30/10/2026 junto com o agy no loop de TDD. Para reativar, descomente:
+- Exceção: no loop de TDD, `executor` e `test-engineer` rodam no `agy`, fora do alcance dos hooks; a verificação completa e a guarda de `tests/` viram checagem da sessão principal depois de cada chamada, e a dos casos de eval reservados fica só no prompt.
+-->
 - Os agentes que corrigem o assistente não leem os casos de eval reservados.
 - Guardas das macroetapas, todas em `.claude/hooks/flow.sh` sobre o estado da unidade em `.git/pet-helper-flow.json`:
   - o registro no hexlog só aceita a fase que a macro declarou (ou `impasse`), nunca uma fase deduzida do comando;

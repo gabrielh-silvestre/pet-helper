@@ -56,6 +56,10 @@ class Catalog:
         self._products = tuple(load_products(path))
         self._skus = frozenset(product.sku for product in self._products)
 
+    @property
+    def skus(self) -> frozenset[str]:
+        return self._skus
+
     def exists(self, sku: str) -> bool:
         return sku in self._skus
 

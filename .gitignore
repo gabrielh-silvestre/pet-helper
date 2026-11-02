@@ -222,3 +222,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Eval run output: traces and Inspect logs stay local, committed results live under evals/results/
+/traces/
+/logs/
+evals/held_out/results/

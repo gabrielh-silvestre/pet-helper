@@ -1,3 +1,5 @@
+import hashlib
+
 # texto estável byte a byte: sem data, sem id de sessão
 # (pré-requisito do cache de prompt, que só chega com a unidade de trace)
 SYSTEM_PROMPT = """\
@@ -27,3 +29,7 @@ pergunta sobre a saúde do animal (animal_health_question), estiver muito irrita
 reclamação comum (atraso dentro do prazo, queixa de preço) não escala: responda \
 normalmente.
 """
+
+
+def system_prompt_sha256() -> str:
+    return hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()

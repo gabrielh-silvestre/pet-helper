@@ -1,6 +1,6 @@
 # Arquitetura
 
-Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 28/10/2026 numa rodada de bootstrap sem spec nem plano: as perguntas vieram direto do dono. Cada unidade de trabalho seguinte registra o que acrescenta em `docs/specs/<slug>/architecture.md` e aponta para esta. Toda decisão nasce com `origin: simulated` e passa a `simulated-approved` com o aval do dono; as desta linha de base foram aprovadas pelo dono em 28/10/2026. Em 29/10/2026 o dono revisou o que já existia pronto na comunidade e trocou peças próprias por ferramentas curadas: `genai-prices` e callback do LangChain no tracing, Presidio na máscara e Inspect AI na eval (decisões 2, 4 e 5, `origin: owner`). Os fatos de modelo e preço foram conferidos em 28/10/2026 em `platform.claude.com/docs/en/about-claude/pricing` e `.../build-with-claude/prompt-caching`; os do Ollama, em `docs.ollama.com` e `hub.docker.com/r/ollama/ollama`.
+Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 28/10/2026 numa rodada de bootstrap sem spec nem plano: as perguntas vieram direto do dono. Cada unidade de trabalho seguinte registra o que acrescenta em `docs/specs/<slug>/architecture.md` e aponta para esta. Toda decisão nasce com `origin: simulated` e passa a `simulated-approved` com o aval do dono; as desta linha de base foram aprovadas pelo dono em 28/10/2026. Em 29/10/2026 o dono revisou o que já existia pronto na comunidade e trocou peças próprias por ferramentas curadas: `genai-prices` e callback do LangChain no tracing, Presidio na máscara e Inspect AI na eval (decisões 2, 4 e 5, `origin: owner`). Em 30/10/2026 a unidade de entrega dos evals emendou as seções 2, 4 e 5 ([specs/eval-delivery/architecture.md](specs/eval-delivery/architecture.md)). Os fatos de modelo e preço foram conferidos em 28/10/2026 em `platform.claude.com/docs/en/about-claude/pricing` e `.../build-with-claude/prompt-caching`; os do Ollama, em `docs.ollama.com` e `hub.docker.com/r/ollama/ollama`.
 
 ## 1. Modelo por papel
 
@@ -47,11 +47,15 @@ O Haiku 5.5 é o modelo fraco e barato que a premissa `qualidade-vem-do-sistema`
   - `turn.start`: texto do usuário, mascarado.
   - `guard.input`: CPF detectado, suspeita de injection.
   - `retrieval`: query, hits com `source` e `score`.
-  - `model.call`: provider, modelo, `ttft_ms`, `duration_ms`, tokens de entrada e saída, `cache_read`, `cache_write`, `stop_reason`, `fallback`.
+  - `model.call`: provider, modelo, tempo até o primeiro chunk, `duration_ms`, tokens de entrada e saída, tokens de cache read e write, motivo de parada, `fallback` (as chaves gravadas estão na tabela abaixo).
   - `tool.call`: nome, argumentos, status, erro de validação e motivo interno. No `get_order`, o motivo é `not_found` ou `other_customer` ([ADR 0001](adr/0001-order-access-by-cpf-and-order-number.md)).
   - `guard.output`: SKUs inválidos, fonte não recuperada.
   - `escalation`: motivo.
   - `turn.end`: resposta mascarada, fontes citadas.
+- As chaves são planas e seguem os nomes do OpenTelemetry GenAI, com o prefixo `pet_helper.*` para o que a convenção não cobre; a tabela abaixo da lista mapeia o nosso para o OTel. A fonte da convenção é o `client-inference.md` do repositório `open-telemetry/semantic-conventions-genai`, consultado em 30/10/2026, onde todos os atributos têm status Development.
+- Ids de correlação: toda linha leva `trace_id` (`<session_id>:<turn>`), e as linhas `model.call` e `tool.call` levam também `span_id` e `parent_span_id` (o `run_id` e o `parent_run_id` do LangChain). Não são ids do OTel, que têm 32 e 16 caracteres hexadecimais: um exportador futuro faz o mapeamento. Os ids de span não passam pela máscara, porque são opacos e uma sequência de dígitos poderia ser lida como telefone.
+- Interruptor de conteúdo: `PET_HELPER_TRACE_CONTENT` vem ligado por padrão, no chat e nas rodadas de eval (o runner fixa o valor `1`), e o texto livre sai mascarado. Com `PET_HELPER_TRACE_CONTENT=0`, os campos `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.retrieval.query.text` e `gen_ai.tool.call.arguments` gravam só o tamanho.
+- Ordem no sink: cada texto passa por `Guard.mask`, depois é truncado em 10.000 caracteres (o corte acrescenta `[truncated N chars]`) e por fim a linha vai por `json.dumps`, que escapa o que não é ASCII, de modo que um texto com quebra de linha não parte o JSONL.
 - A máscara é aplicada num único ponto, o sink do trace, por `Guard.mask`:
   - A detecção usa o Presidio (`presidio-analyzer` e `presidio-anonymizer`) só com regex, no motor `no_op`, sem modelo de NLP: e-mail e telefone pelos reconhecedores nativos (região BR) e CPF por um `PatternRecognizer` nosso, aplicado antes do telefone, porque 11 dígitos colidem com ele.
   - CPF, com ou sem formatação, vira o pseudônimo estável `cpf#<8 hex>` (HMAC-SHA256 com o sal de `PET_HELPER_TRACE_SALT`; sem a variável, um sal aleatório por processo). Todo número com formato de CPF é mascarado, mesmo com dígitos verificadores inválidos; a validação só decide se ele vincula o Session Customer.
@@ -74,6 +78,26 @@ O Haiku 5.5 é o modelo fraco e barato que a premissa `qualidade-vem-do-sistema`
   - custo e latência por conversa, que alimentam o README.
 - O prompt cache usa dois breakpoints: um no fim do prompt de sistema estático (as tools são renderizadas antes dele, então entram junto) e um na última mensagem. O prompt de sistema fica byte a byte estável: sem data nem id. O mínimo cacheável do Haiku 5.5 é de 512 tokens, e o prefixo estático passa disso.
 - O gateway sempre consome o modelo em streaming, para medir TTFT e TPS. A CLI mostra a resposta só depois do guard de saída.
+
+Mapeamento do que o trace grava para a convenção OpenTelemetry GenAI (o tempo até o primeiro chunk era `ttft_ms`, o cache write era `cache_write` e o motivo de parada era `stop_reason`):
+
+| Evento | Chave gravada | Convenção OTel GenAI |
+|---|---|---|
+| `model.call` | `gen_ai.provider.name` | igual (o Ollama não está entre os valores conhecidos) |
+| `model.call` | `gen_ai.request.model`, `gen_ai.response.model` | igual |
+| `model.call` | `gen_ai.response.time_to_first_chunk` | igual, em segundos; nulo quando a chamada não fez streaming |
+| `model.call` | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | igual; a entrada já soma cache read e write |
+| `model.call` | `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens` | igual |
+| `model.call` | `gen_ai.response.finish_reasons` | igual, em lista |
+| `model.call` | `error.type` | igual, só quando a chamada falha |
+| `model.call` | `duration_ms`, `pet_helper.fallback`, `pet_helper.streaming`, `pet_helper.cost_usd`, `pet_helper.price_unknown` | sem equivalente |
+| `tool.call` | `gen_ai.tool.name`, `gen_ai.tool.call.arguments` | igual (a convenção chama a operação de `execute_tool`) |
+| `tool.call` | `pet_helper.status`, `error.message` | sem equivalente |
+| `retrieval` | `gen_ai.retrieval.query.text` | igual; `pet_helper.hits` é nosso |
+| `turn.start`, `turn.end` | `gen_ai.input.messages`, `gen_ai.output.messages` | igual; `pet_helper.sources` é nosso |
+| `guard.input`, `guard.output`, `escalation`, `order.refused` | `pet_helper.*` | sem equivalente |
+
+O trace não grava `gen_ai.operation.name` nem `gen_ai.conversation.id`: o nome do evento e o `session_id` já dizem o mesmo.
 
 ### Motivo
 
@@ -147,7 +171,7 @@ Cada módulo é um módulo profundo, documentado pela interface. Os nomes intern
 | `orders` | `OrderService.lookup(customer: Cpf \| None, order_number: str) -> Found(OrderView) \| NotFound \| NeedsIdentification \| Unavailable` | collapse of 404 and other-customer refusal into `NotFound` (ADR 0001), one retry on timeout, `days_since_delivery` via `Clock`, PII allowlist of `OrderView`, internal reason to trace | port `OrderApi.get(order_number, customer_cpf) -> ApiResponse(status, body)` with adapter `MockOrderApi` over `kit/orders.json` (200/404/403/503/timeout; failure by a fixed order number or `PET_HELPER_ORDER_API_FAILURE`); `Clock.today()` from `PET_HELPER_TODAY` or the system date |
 | `catalog` | `Catalog.search(text, species=None, category=None) -> list[Product(sku, name, ..., in_stock)]`; `Catalog.exists(sku) -> bool` | CSV loading, similar-name matching | none |
 | `trace` | `Tracer.event(kind, **fields)`; `summarize(paths) -> MetricsTable` | JSONL layout, LangChain callback handler for model and tool calls, masking at the sink, cost through `genai-prices` | sink writes under the run's directory (held-out runs under `evals/held_out/`) |
-| `evals` | `run_round(selection, runs=3, judge="sync" \| "batch", budget_usd=5) -> RoundResult`; pure check functions | Inspect AI task (YAML case loader, multi-turn solver calling `Assistant`, scorer with the pure checks and the judge), estimate and confirmation, round budget stop, `cases.csv` export | judge through an Inspect model role (Anthropic sync or batch, Ollama sync); `Assistant` reused as-is |
+| `evals` | `run_round(selection, runs=3, judge="sync" \| "batch" \| "none", budget_usd=5) -> RoundResult`; pure check functions | Inspect AI task (YAML case loader, multi-turn solver calling `Assistant`, scorer with the pure checks and the judge), estimate and confirmation, round budget stop, `cases.csv` export | judge as a pure function over an injected client (Anthropic SDK sync and Message Batches API; Ollama client later), called by the scorer and by post-steps (batch, `--rejudge`, `--collect`, the label tool); `Assistant` reused as-is |
 
 Tools que o modelo vê: `search_policies(query)`, `get_order(order_number)` sem CPF, `search_catalog(query, species?, category?)` e `escalate_to_human(reason)`, com motivo em enum. Repeated Failure é decidido pelo backend, não pelo modelo. Um segundo CPF na mesma conversa é recusado: o Session Customer continua o primeiro, e outro cliente exige conversa nova.
 
@@ -191,7 +215,7 @@ Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, form
   - termos obrigatórios e proibidos;
   - valor esperado, para RN01 a RN04.
 - Juiz: um critério por chamada (tom, julgamento de escalonamento, acerto do "não sei"), com veredito `pass`, `fail` ou `unable`.
-- Motor: Inspect AI (versão fixada no `uv.lock`, porque é pré-1.0 e lança quase todo dia), com uma casca fina nossa, `pet-helper eval [--suite ...] [--case ...] [--judge sync|batch] [--held-out]`.
+- Motor: Inspect AI (versão fixada no `uv.lock`, porque é pré-1.0 e lança quase todo dia), com uma casca fina nossa, `pet-helper eval [--suite ...] [--case ...] [--judge sync|batch|none] [--runs N] [--held-out]`, mais `--rejudge <rodada>` e `--collect <rodada>`.
   1. Carrega os YAML como amostras do Inspect.
   2. Mostra a estimativa de tokens e custo, pela média da última rodada salva ou por um valor padrão por turno, e pede confirmação.
   3. Roda cada caso 3 vezes (`--epochs 3`, com reducer que só passa em 3 de 3), com concorrência (8 na Anthropic, 1 no Ollama) e fallback desligado. Um erro de infraestrutura conta como `error`, nunca como `pass`: o Inspect tiraria a exceção do denominador, então a casca a registra explicitamente.
@@ -199,7 +223,9 @@ Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, form
   - O juiz é um scorer nosso; `unable` vira `Score.unscored()`. O `inspect view` é o visualizador local das conversas.
 - Modo do juiz:
   - `sync` é o padrão, usado na apresentação ao vivo e em suíte pequena.
-  - `batch` serve para as rodadas que contam. A primeira tarefa da unidade de eval é um teste prático do lote no scorer do Inspect, que a documentação não confirma; se falhar, o juiz fica só síncrono. O runner envia o lote depois das conversas e espera o resultado. Se o lote não terminar no prazo de espera, salva o id em `round.json`, e `pet-helper eval --collect <rodada>` termina a rodada depois.
+  - `batch` serve para as rodadas que contam. O lote usa a Message Batches API direto, fora do scorer do Inspect, e o teste real dessa API é feito pelo dono no passo 1 dos passos do dono; se falhar, o juiz fica só síncrono. O runner envia o lote depois das conversas e espera o resultado. Se o lote não terminar no prazo de espera, salva o id em `round.json`, e `pet-helper eval --collect <rodada>` termina a rodada depois.
+  - `none` roda só as conversas, sem juiz. A baseline o usa, porque o prompt do juiz ainda não está congelado; os casos com critério do juiz ficam `judge_pending` até o re-julgamento.
+  - `--rejudge <rodada>` aplica o juiz congelado às transcrições salvas de uma rodada e grava o `judge.jsonl`, com estimativa, confirmação e teto de US$ 5 próprios.
 - Resultados, versionados no repositório (entregável 4), em `evals/results/<round_id>/`:
   - `round.json`: SHA do git, modelos, hash do prompt do assistente e do juiz, relógio, custo total.
   - `results.json`: o log do Inspect, por caso e por execução, a transcrição mascarada, os checks, a crítica e o veredito do juiz, tokens, custo, latência, modelo e se o `expected_doc` foi recuperado.
@@ -207,7 +233,7 @@ Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, form
   - `traces/`.
   - A contagem por categoria é um script sobre o CSV.
 - Casos reservados: só rodam com `--held-out` e `PET_HELPER_HELD_OUT=1`. Resultados e traces vão para `evals/held_out/results/<round_id>/`, sob o bloqueio do hook. A saída no terminal mostra só o id e o k/3, nunca o conteúdo.
-- Juiz no caminho sem chave: o mesmo prompt, no `llama3.1:8b`. Os 10 a 15 rótulos do dono medem TPR e TNR dos dois juízes, e o README declara os dois números.
+- Juiz no caminho sem chave: o mesmo prompt, no `llama3.1:8b`. Só o juiz Sonnet é validado nesta unidade, nos termos da [loop-melhoria.md](directives/loop-melhoria.md): cerca de 50 rótulos por critério, divisão por caso em dev e teste e piso de TPR e TNR escrito pelo dono antes de ler o teste. O juiz Llama não é validado, e o README o declara assim.
 - Limitações declaradas do juiz:
   - não há controle de temperatura no Sonnet, porque a API rejeita;
   - o Sonnet é da mesma família do Haiku avaliado, então há risco de autopreferência;

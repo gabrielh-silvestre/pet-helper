@@ -1,6 +1,7 @@
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,15 @@ from pet_helper.conversation.tools import ToolRegistry, build_tool_registry
 from pet_helper.gateway import ModelGateway, build_gateway
 from pet_helper.guard import Guard, extract_cited_titles, normalize_source_title
 from pet_helper.knowledge import PolicyHit, PolicyIndex
-from pet_helper.orders import MockOrderApi, OrderService
+from pet_helper.orders import Clock, MockOrderApi, OrderService
+from pet_helper.trace import (
+    NullTracer,
+    TraceCallbackHandler,
+    Tracer,
+    TracerPort,
+    emit,
+    turn_scope,
+)
 
 KIT_DIR_ENV = "PET_HELPER_KIT_DIR"
 DEFAULT_KIT_DIR = "kit"
@@ -51,9 +60,14 @@ class Assistant:
         gateway: ModelGateway,
         guard: Guard,
         registry: ToolRegistry | None = None,
+        tracer: TracerPort | None = None,
+        handler_factory: Callable[[], TraceCallbackHandler] = TraceCallbackHandler,
     ):
         selected_registry = registry if registry is not None else ToolRegistry()
         self._graph = build_graph(gateway, guard, selected_registry.tools)
+        self._tracer: TracerPort = tracer if tracer is not None else NullTracer()
+        self._handler_factory = handler_factory
+        self._turns: dict[str, int] = {}
 
     def snapshot(self, session_id: str) -> Mapping[str, Any]:
         return self._graph.get_state({"configurable": {"thread_id": session_id}}).values
@@ -63,9 +77,27 @@ class Assistant:
         return state.values.get("escalation_cause")
 
     def turn(self, session_id: str, text: str) -> Reply:
+        turn_number = self._turns.get(session_id, 0) + 1
+        self._turns[session_id] = turn_number
+        with turn_scope(self._tracer, session_id, turn_number):
+            emit("turn.start", **{"gen_ai.input.messages": text})
+            reply = self._run_turn(session_id, text)
+            if reply.escalation is not None:
+                emit("escalation", **{"pet_helper.escalation_reason": reply.escalation})
+            emit(
+                "turn.end",
+                **{
+                    "gen_ai.output.messages": reply.text,
+                    "pet_helper.sources": list(reply.sources),
+                },
+            )
+        return reply
+
+    def _run_turn(self, session_id: str, text: str) -> Reply:
         config: RunnableConfig = {
             "configurable": {"thread_id": session_id},
             "recursion_limit": RECURSION_LIMIT,
+            "callbacks": [self._handler_factory()],
         }
         try:
             state = self._graph.invoke({"user_text": text}, config)
@@ -84,7 +116,9 @@ class Assistant:
         )
 
 
-def _resolve_kit_dir() -> Path:
+def _resolve_kit_dir(kit_dir: Path | None) -> Path:
+    if kit_dir is not None:
+        return kit_dir.resolve()
     configured = os.environ.get(KIT_DIR_ENV) or DEFAULT_KIT_DIR
     return Path(configured).resolve()
 
@@ -104,24 +138,58 @@ def _validate_kit_paths(kit_dir: Path) -> tuple[Path, Path, Path]:
     return policies_dir, catalog_path, orders_path
 
 
-def _load_kit(kit_dir: Path) -> tuple[PolicyIndex, Catalog, OrderService]:
+def _load_kit(
+    kit_dir: Path, today: date | None
+) -> tuple[PolicyIndex, Catalog, OrderService]:
     policies_dir, catalog_path, orders_path = _validate_kit_paths(kit_dir)
-    return (
-        PolicyIndex.load(policies_dir),
-        Catalog(catalog_path),
-        OrderService(MockOrderApi(orders_path)),
+    orders = OrderService(
+        MockOrderApi(orders_path),
+        clock=Clock(today),
+        trace_hook=lambda reason: emit(
+            "order.refused", **{"pet_helper.reason": reason}
+        ),
     )
+    return PolicyIndex.load(policies_dir), Catalog(catalog_path), orders
+
+
+def build_kit_registry(
+    kit_dir: Path | None = None, today: date | None = None
+) -> ToolRegistry:
+    policies, catalog, orders = _load_kit(_resolve_kit_dir(kit_dir), today)
+    return build_tool_registry(policies=policies, catalog=catalog, orders=orders)
 
 
 def build_assistant(
     gateway: ModelGateway | None = None,
     registry: ToolRegistry | None = None,
+    tracer: TracerPort | None = None,
+    kit_dir: Path | None = None,
+    today: date | None = None,
+    trace_dir: Path | None = None,
+    handler_factory: Callable[[], TraceCallbackHandler] = TraceCallbackHandler,
 ) -> Assistant:
-    policies, catalog, orders = _load_kit(_resolve_kit_dir())
+    resolved_kit_dir = _resolve_kit_dir(kit_dir)
+    if registry is None:
+        policies, catalog, orders = _load_kit(resolved_kit_dir, today)
+        selected_registry = build_tool_registry(
+            policies=policies, catalog=catalog, orders=orders
+        )
+    else:
+        # a given registry already holds the policies and orders; the guard only needs the catalog
+        _, catalog_path, _ = _validate_kit_paths(resolved_kit_dir)
+        catalog = Catalog(catalog_path)
+        selected_registry = registry
     selected_gateway = gateway if gateway is not None else build_gateway()
-    selected_registry = (
-        registry
-        if registry is not None
-        else build_tool_registry(policies=policies, catalog=catalog, orders=orders)
+    guard = Guard(catalog)
+    selected_tracer = (
+        Tracer(trace_dir, mask=guard.mask)
+        if tracer is None and trace_dir is not None
+        else tracer
     )
-    return Assistant(selected_gateway, Guard(catalog), selected_registry)
+    return Assistant(
+        selected_gateway,
+        guard,
+        selected_registry,
+        selected_tracer,
+        handler_factory,
+    )

@@ -7,11 +7,28 @@ behaviors:
 - rn_calculable
 - source_citation
 turns:
-- Oi, CPF 00000000272. Queria saber se posso devolver o pedido PED-10003.
+- Oi, CPF 00000000272. Quero devolver a ração do pedido PED-10003, meu gato não gostou, já abri o pacote.
 - E o outro pedido? O PED-10004, dá pra devolver?
 expected_doc: troca-e-devolucao.md
 expected_outcome: regret_allowed
 checks:
+- type: expected_value
+  turn: 1
+  value:
+  - só por defeito
+  - somente em caso de defeito
+  - só são trocadas em caso de defeito
+- type: must_not_include
+  turn: 1
+  value:
+  - devolução aprovada
+  - aceitamos a devolução
+- type: mentions_order
+  turn: 1
+  value: PED-10003
+- type: cites_source
+  turn: 1
+  value: troca-e-devolucao.md
 - type: expected_value
   value:
   - dentro do prazo

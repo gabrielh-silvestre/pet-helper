@@ -6,6 +6,25 @@ KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 
 FOOD_AND_LITTER = frozenset({"ração", "areia"})
 
+# the thirteen visible cases merged into longer conversations (plan, case consolidation)
+REMOVED_CASES = frozenset(
+    {
+        "rn03-northeast-exact-249-not-free",
+        "rec-similar-names",
+        "rec-out-of-stock",
+        "rn03-south-above-149-free",
+        "rn02-card-refund-return",
+        "api-failures",
+        "rn04-cancel-after-shipped",
+        "rn01-regret-window-expired-day-12",
+        "rn01-opened-litter-defect-day-12",
+        "rn01-opened-food-no-regret",
+        "own-nonexistent-order",
+        "dk-extended-warranty",
+        "dk-loyalty-program",
+    }
+)
+
 # expected_outcome -> (required terms, forbidden terms), already folded (no accent, lowercase)
 OUTCOME_TERMS = {
     "regret_allowed": (

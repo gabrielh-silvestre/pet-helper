@@ -1,4 +1,8 @@
+import importlib
+import json
+import re
 import sys
+from datetime import UTC, date, datetime
 from importlib.metadata import entry_points
 from pathlib import Path
 
@@ -30,14 +34,17 @@ CLI_ENV_VARS = (
     "PET_HELPER_EFFORT",
     "PET_HELPER_FALLBACK",
     "PET_HELPER_KIT_DIR",
+    "PET_HELPER_TRACE_CONTENT",
 )
 
 
 @pytest.fixture(autouse=True)
-def _configure_cli_env(monkeypatch):
+def _configure_cli_env(monkeypatch, tmp_path):
     for name in CLI_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("PET_HELPER_KIT_DIR", str(REPO_KIT_DIR))
+    # chat writes its trace under ./traces: keep it out of the repository
+    monkeypatch.chdir(tmp_path)
 
 
 def _set_input_lines(monkeypatch, lines, exhausted=EOFError):
@@ -66,7 +73,7 @@ def _run_chat(monkeypatch, lines, gateway, exhausted=EOFError):
     real_build_assistant = pet_helper.conversation.build_assistant
     _patch_build_assistant(
         monkeypatch,
-        lambda: real_build_assistant(gateway=gateway),
+        lambda *args, **kwargs: real_build_assistant(*args, gateway=gateway, **kwargs),
     )
     try:
         return main(["chat"])
@@ -476,3 +483,231 @@ def test_it_should_register_the_pet_helper_console_script():
     (entry_point,) = entry_points(group="console_scripts", name="pet-helper")
 
     assert entry_point.load() is main
+
+
+def _chat_trace_files(directory: Path) -> list[Path]:
+    return sorted(directory.glob("traces/*/*.jsonl"))
+
+
+def _chat_trace_events(directory: Path) -> list[dict]:
+    (trace_file,) = _chat_trace_files(directory)
+    return [
+        json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def _chat_trace_turn_start(monkeypatch, directory: Path, line: str) -> dict:
+    _run_chat(monkeypatch, [line], FakeGateway(["Posso ajudar."]))
+    return next(
+        event
+        for event in _chat_trace_events(directory)
+        if event["event"] == "turn.start"
+    )
+
+
+def test_it_should_write_the_chat_trace_to_a_dated_file_named_by_the_session(
+    monkeypatch, tmp_path
+):
+    _run_chat(monkeypatch, ["Olá"], FakeGateway(["Posso ajudar."]))
+
+    (trace_file,) = _chat_trace_files(tmp_path)
+    relative = trace_file.relative_to(tmp_path).as_posix()
+    assert re.fullmatch(r"traces/\d{4}-\d{2}-\d{2}/[0-9a-f]{32}\.jsonl", relative)
+
+
+def test_it_should_name_the_trace_directory_after_the_day_of_the_session(
+    monkeypatch, tmp_path
+):
+    _run_chat(monkeypatch, ["Olá"], FakeGateway(["Posso ajudar."]))
+
+    (trace_file,) = _chat_trace_files(tmp_path)
+    assert trace_file.parent.name in {
+        date.today().isoformat(),
+        datetime.now(UTC).date().isoformat(),
+    }
+
+
+def test_it_should_use_the_file_name_as_the_session_id_of_every_event(
+    monkeypatch, tmp_path
+):
+    _run_chat(monkeypatch, ["Olá"], FakeGateway(["Posso ajudar."]))
+
+    (trace_file,) = _chat_trace_files(tmp_path)
+    session_ids = {event["session_id"] for event in _chat_trace_events(tmp_path)}
+    assert session_ids == {trace_file.stem}
+
+
+def test_it_should_mask_the_cpf_in_the_chat_trace(monkeypatch, tmp_path):
+    _run_chat(
+        monkeypatch,
+        ["Meu CPF é 000.000.001-91. Como devolvo uma ração?"],
+        FakeGateway(["Posso ajudar."]),
+    )
+
+    (trace_file,) = _chat_trace_files(tmp_path)
+    written = trace_file.read_text(encoding="utf-8")
+    assert "000.000.001-91" not in written
+    assert "00000000191" not in written
+
+
+def test_it_should_write_the_masked_content_by_default(monkeypatch, tmp_path):
+    turn_start = _chat_trace_turn_start(
+        monkeypatch, tmp_path, "Como devolvo uma ração?"
+    )
+
+    assert turn_start["gen_ai.input.messages"] == "Como devolvo uma ração?"
+
+
+def test_it_should_write_only_lengths_when_trace_content_is_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("PET_HELPER_TRACE_CONTENT", "0")
+
+    turn_start = _chat_trace_turn_start(
+        monkeypatch, tmp_path, "Como devolvo uma ração?"
+    )
+
+    assert turn_start["gen_ai.input.messages"] == len("Como devolvo uma ração?")
+
+
+def _metrics_event(kind, **fields):
+    return {
+        "ts": "2026-10-31T12:00:00+00:00",
+        "session_id": "s1",
+        "turn": 1,
+        "event": kind,
+        "trace_id": "s1:1",
+        **fields,
+    }
+
+
+def _write_metrics_trace(directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    model_call = _metrics_event(
+        "model.call",
+        **{
+            "gen_ai.provider.name": "anthropic",
+            "gen_ai.request.model": "claude-haiku-5-5",
+            "gen_ai.response.time_to_first_chunk": 0.25,
+            "duration_ms": 1300.0,
+            "gen_ai.usage.input_tokens": 100,
+            "gen_ai.usage.output_tokens": 10,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+            "pet_helper.fallback": False,
+            "pet_helper.cost_usd": 0.001,
+        },
+    )
+    (directory / "s1.jsonl").write_text(json.dumps(model_call) + "\n", encoding="utf-8")
+
+
+def _forbid_gateways(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("metrics must not construct a gateway")
+
+    _patch_build_assistant(monkeypatch, refuse)
+    monkeypatch.setattr(AnthropicGateway, "__init__", refuse)
+    monkeypatch.setattr(OllamaGateway, "__init__", refuse)
+
+
+def test_it_should_exit_with_zero_after_printing_the_metrics(tmp_path):
+    _write_metrics_trace(tmp_path / "traces")
+
+    assert main(["metrics", str(tmp_path / "traces")]) == 0
+
+
+def test_it_should_print_the_model_row_of_the_metrics_table(tmp_path, capsys):
+    _write_metrics_trace(tmp_path / "traces")
+
+    main(["metrics", str(tmp_path / "traces")])
+
+    assert "claude-haiku-5-5" in capsys.readouterr().out
+
+
+def test_it_should_print_the_time_to_first_chunk_in_milliseconds(tmp_path, capsys):
+    _write_metrics_trace(tmp_path / "traces")
+
+    main(["metrics", str(tmp_path / "traces")])
+
+    assert "250" in capsys.readouterr().out
+
+
+def test_it_should_not_construct_a_gateway_when_printing_metrics(monkeypatch, tmp_path):
+    _write_metrics_trace(tmp_path / "traces")
+    _forbid_gateways(monkeypatch)
+
+    assert main(["metrics", str(tmp_path / "traces")]) == 0
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_metrics_directory_is_missing(
+    tmp_path, capsys
+):
+    missing = tmp_path / "missing-traces"
+
+    code = main(["metrics", str(missing)])
+
+    captured = capsys.readouterr()
+    non_empty_lines = [
+        line for line in f"{captured.out}{captured.err}".splitlines() if line.strip()
+    ]
+    assert (code, len(non_empty_lines)) == (1, 1)
+    assert str(missing) in non_empty_lines[0]
+
+
+def test_it_should_exit_with_one_printing_one_line_when_the_metrics_directory_is_empty(
+    tmp_path, capsys
+):
+    empty = tmp_path / "empty-traces"
+    empty.mkdir()
+
+    code = main(["metrics", str(empty)])
+
+    captured = capsys.readouterr()
+    non_empty_lines = [
+        line for line in f"{captured.out}{captured.err}".splitlines() if line.strip()
+    ]
+    assert (code, len(non_empty_lines)) == (1, 1)
+    assert str(empty) in non_empty_lines[0]
+
+
+EVAL_FLAGS = (
+    "--suite",
+    "--case",
+    "--judge",
+    "--held-out",
+    "--runs",
+    "--collect",
+    "--rejudge",
+)
+
+
+def _eval_help(capsys) -> str:
+    with pytest.raises(SystemExit) as stop:
+        main(["eval", "--help"])
+    assert stop.value.code == 0
+    return capsys.readouterr().out
+
+
+@pytest.mark.parametrize("flag", EVAL_FLAGS)
+def test_it_should_list_each_eval_flag_in_the_eval_help(flag, capsys):
+    assert flag in _eval_help(capsys)
+
+
+@pytest.mark.parametrize("choice", ["sync", "batch", "none"])
+def test_it_should_list_each_judge_mode_in_the_eval_help(choice, capsys):
+    assert choice in _eval_help(capsys)
+
+
+def test_it_should_exit_with_two_when_the_judge_mode_is_unknown(capsys):
+    with pytest.raises(SystemExit) as stop:
+        main(["eval", "--judge", "parallel"])
+
+    assert (stop.value.code, "--judge" in capsys.readouterr().err) == (2, True)
+
+
+def test_it_should_not_import_inspect_ai_to_load_the_cli(monkeypatch):
+    monkeypatch.setitem(sys.modules, "inspect_ai", None)
+    for name in [n for n in sys.modules if n.startswith("pet_helper.cli")]:
+        monkeypatch.delitem(sys.modules, name)
+
+    module = importlib.import_module("pet_helper.cli")
+
+    assert module.main is not None

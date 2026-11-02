@@ -18,6 +18,7 @@ from pet_helper.orders import (
     OrderService,
     Unavailable,
 )
+from pet_helper.trace import emit
 
 SEARCH_POLICIES_TOOL = "search_policies"
 GET_ORDER_TOOL = "get_order"
@@ -65,6 +66,15 @@ def _make_search_policies(policies: PolicyIndex) -> BaseTool:
         policy matches. Answer only from the returned text and cite the title.
         """
         hits = policies.search(query)
+        emit(
+            "retrieval",
+            **{
+                "gen_ai.retrieval.query.text": query,
+                "pet_helper.hits": [
+                    {"source": hit.source, "score": hit.score} for hit in hits
+                ],
+            },
+        )
         documents = [{"title": hit.title, "text": hit.text} for hit in hits]
         return _to_json({"found": bool(hits), "documents": documents}), hits
 

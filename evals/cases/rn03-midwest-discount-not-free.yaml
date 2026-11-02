@@ -5,11 +5,73 @@ today: '2026-11-03'
 behaviors:
 - rn_calculable
 - source_citation
+- multi_turn
 turns:
-- Oi, CPF 00000000353. O pedido PED-10006 teve frete grátis? Os itens somaram R$ 249,80 e no Centro-Oeste o frete é grátis acima de R$ 249.
-expected_doc: frete.md
+- Oi, CPF 00000000353. Quero devolver a cama PX-0041 do pedido PED-10005, ela está lacrada na caixa, só me arrependi da compra. Dá para devolver?
+- Outra coisa. A areia PX-0020 do mesmo pedido PED-10005 chegou úmida e mofada. Já abri o pacote, ainda consigo trocar?
+- Então quero cancelar o pedido PED-10006.
+- Última dúvida. O pedido PED-10006 teve frete grátis? Os itens somaram R$ 249,80 e no Centro-Oeste o frete é grátis acima de R$ 249.
+expected_doc:
+- troca-e-devolucao.md
+- cancelamento.md
+- frete.md
 expected_outcome: shipping_charged
 checks:
+- type: expected_value
+  turn: 1
+  value:
+  - prazo de 7 dias já passou
+  - prazo de 7 dias terminou
+  - além dos 7 dias
+- type: must_not_include
+  turn: 1
+  value:
+  - devolução aprovada
+  - aceitamos a devolução
+- type: must_include
+  turn: 1
+  value:
+  - defeito
+- type: mentions_order
+  turn: 1
+  value: PED-10005
+- type: cites_source
+  turn: 1
+  value: troca-e-devolucao.md
+- type: expected_value
+  turn: 2
+  value:
+  - dentro do prazo de defeito de 30 dias
+  - até 30 dias corridos após a entrega
+  - ainda pode pedir a troca por defeito
+- type: must_not_include
+  turn: 2
+  value:
+  - fora do prazo
+  - passou o prazo
+- type: cites_source
+  turn: 2
+  value: troca-e-devolucao.md
+- type: mentions_order
+  turn: 2
+  value: PED-10005
+- type: expected_value
+  turn: 3
+  value:
+  - não pode mais ser cancelado
+  - pedir a devolução depois que ele chegar
+  - o prazo da devolução conta a partir da entrega
+- type: must_not_include
+  turn: 3
+  value:
+  - pedido foi cancelado
+  - cancelei o pedido
+- type: cites_source
+  turn: 3
+  value: cancelamento.md
+- type: mentions_order
+  turn: 3
+  value: PED-10006
 - type: expected_value
   value:
   - não tem frete grátis

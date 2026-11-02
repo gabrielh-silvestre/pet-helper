@@ -4,13 +4,22 @@ today: '2026-11-03'
 behaviors:
 - multi_turn
 - recommendation
+- recommendation_out_of_stock
+- recommendation_similar_names
 turns:
-- Preciso de uma ração para o meu cachorro, o que vocês têm?
-- Ah, desculpa, na verdade é para gato.
+- Vocês têm a Ração Focinhex Adultos Carne 15 kg? Quero comprar hoje.
+- Então me mostra outra ração para o meu cachorro, o que vocês têm?
+- Ah, desculpa, na verdade é para gato. Queria a ração Bigodin de salmão para castrados, pode me passar?
 checks:
 - type: skus_exist
 - type: tool_called
   value: search_catalog
+- type: expected_value
+  turn: 1
+  value:
+  - sem estoque
+  - esgotado
+  - indisponível
 - type: expected_value
   value:
   - PX-0001
@@ -27,3 +36,7 @@ checks:
   - PX-0007
   - PX-0008
   - PX-0011
+- type: must_include
+  value:
+  - 3 kg
+  - 10 kg

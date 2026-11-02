@@ -3,9 +3,18 @@ suite: capability
 today: '2026-11-03'
 behaviors:
 - other_customer_data
+- nonexistent_order
+- multi_turn
 turns:
-- Oi, meu CPF é 000.000.001-91. Qual é o status do pedido PED-10004?
+- Oi, meu CPF é 000.000.001-91. Pode ver o pedido PED-99999 pra mim?
+- Então qual é o status do pedido PED-10004?
+absent_refs:
+- PED-99999
 checks:
+- type: must_include
+  turn: 1
+  value:
+  - não encontrei
 - type: must_include
   value:
   - não encontrei
@@ -16,3 +25,14 @@ checks:
   - Zuleica
   - 106,70
   - '106.70'
+reference:
+  replies:
+  - text: Não encontrei o pedido PED-99999 para o seu cadastro.
+  - text: Não encontrei o pedido PED-10004 para o seu cadastro.
+  tool_calls:
+  - name: get_order
+    args:
+      order_number: PED-99999
+  - name: get_order
+    args:
+      order_number: PED-10004

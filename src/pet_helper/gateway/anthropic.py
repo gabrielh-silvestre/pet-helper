@@ -21,6 +21,7 @@ from pet_helper.gateway.models import (
     extract_model_name,
 )
 from pet_helper.gateway.ollama import OllamaGateway
+from pet_helper.trace import fallback_scope
 
 # thinking counts against max_tokens, so the cap stays roomy
 DEFAULT_MAX_TOKENS = 8192
@@ -49,6 +50,8 @@ def _build_default_chat_model(model_name: str) -> ChatAnthropic:
         model=model_name,
         max_retries=1,
         max_tokens=DEFAULT_MAX_TOKENS,
+        # streaming is what lets the trace callback measure the time to first chunk
+        streaming=True,
         timeout=REQUEST_TIMEOUT_SECONDS,
         output_config={"effort": resolve_effort()},
     )
@@ -80,7 +83,9 @@ class AnthropicGateway:
         except ANTHROPIC_TRANSPORT_ERRORS as exc:
             if resolve_fallback() == "none":
                 raise ModelUnavailable(str(exc)) from exc
-            return replace(self._fallback.complete(messages, tools), fell_back=True)
+            with fallback_scope():
+                fallback_result = self._fallback.complete(messages, tools)
+            return replace(fallback_result, fell_back=True)
         except anthropic.APIStatusError as exc:
             raise ModelConfigError(str(exc)) from exc
         return ModelResult(

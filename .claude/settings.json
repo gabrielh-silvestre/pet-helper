@@ -24,11 +24,21 @@
         ]
       },
       {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob|WebFetch|mcp__github-official__.*|mcp__gitnexus__.*|mcp__plugin_context-mode_.*|mcp__plugin_oh-my-claudecode_t__(python_repl|ast_grep_.*|lsp_.*)",
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"$PET_HELPER_HELD_OUT\" = 1 ] || ! jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/held-out.jq\" >/dev/null || { echo 'Held-out eval cases are hidden from agents that change the assistant; run them only through the accept/reject step.' >&2; exit 2; }",
+            "command": "[ \"$PET_HELPER_HELD_OUT\" = 1 ] && exit 0; jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/held-out.jq\" >/dev/null 2>&1; rc=$?; [ \"$rc\" -eq 1 ] || { echo 'Held-out eval cases are hidden from agents that change the assistant; run them only through the accept/reject step. To search the repository root or evals, exclude the folder: grep --exclude-dir=held_out, find -not -path */held_out/*, rg without -u, Grep tool glob !evals/held_out/**; git grep/show/log -p/diff <rev> take a pathspec: -- src tests docs' >&2; exit 2; }",
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|mcp__plugin_context-mode_.*|mcp__plugin_oh-my-claudecode_t__python_repl",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/paid-command.jq\" >/dev/null 2>&1; rc=$?; [ \"$rc\" -eq 1 ] || { echo 'Paid eval commands (pet-helper eval, judge smoke, labels judge-pool) are never run by an agent; the owner runs them in their own terminal.' >&2; exit 2; }",
             "onFailure": "block"
           }
         ]

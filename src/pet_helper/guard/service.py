@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ TRACE_SALT_ENV = "PET_HELPER_TRACE_SALT"
 _CPF_PLACEHOLDER = "[CPF informado]"
 _INVALID_CPF_PLACEHOLDER = "[CPF inválido]"
 _PROCESS_SALT = secrets.token_hex(16)
+# functools.cache lets concurrent first calls each build the engines; the lock makes the first call single
+_ENGINES_LOCK = threading.Lock()
 
 # mais tolerante que o formato estrito de orders: mascarar demais é o lado seguro
 _CPF_SEPARATOR = r"[\s.\N{HYPHEN}-\N{HORIZONTAL BAR}-]?"
@@ -207,7 +210,8 @@ class Guard:
         )
 
     def mask(self, text: str) -> str:
-        analyzer, anonymizer, operator_config = _get_presidio_engines()
+        with _ENGINES_LOCK:
+            analyzer, anonymizer, operator_config = _get_presidio_engines()
         raw_results = analyzer.analyze(
             text=text,
             language="pt",
