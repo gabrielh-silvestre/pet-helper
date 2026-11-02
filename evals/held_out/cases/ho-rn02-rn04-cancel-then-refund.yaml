@@ -1,0 +1,58 @@
+id: ho-rn02-rn04-cancel-then-refund
+suite: capability
+rule: RN02
+today: "2026-11-03"
+turns:
+  - "Olá! Meu CPF é 00000000434. Pode ver o status do meu pedido PED-10007?"
+  - "Ah, comprei sem querer. Quero cancelar esse pedido, ainda dá?"
+  - "Que bom. E o dinheiro, como ele volta pra mim nesse mesmo pedido?"
+  - "E o frete que eu paguei, volta também ou só o valor da ração?"
+checks:
+  - type: tool_called
+    value: get_order
+  - type: mentions_order
+    value: PED-10007
+    turn: 1
+  - type: expected_value
+    value: ["Pago"]
+    turn: 1
+  - type: expected_value
+    value: ["pode cancelar", "pode ser cancelado", "é possível cancelar", "cancelamento é permitido", "permitido"]
+    turn: 2
+  - type: must_not_include
+    value: ["não pode ser cancelado", "não pode mais ser cancelado", "cancelamento não é permitido"]
+    turn: 2
+  - type: cites_source
+    value: cancelamento.md
+    turn: 2
+  - type: expected_value
+    value: ["2 faturas", "duas faturas"]
+    turn: 3
+  - type: must_include
+    value: ["cartão"]
+    turn: 3
+  - type: must_not_include
+    value: ["5 dias úteis", "cinco dias úteis"]
+    turn: 3
+  - type: cites_source
+    value: reembolso.md
+    turn: 3
+  - type: expected_value
+    value: ["volta", "também", "reembolsado", "devolvido"]
+    turn: 4
+  - type: cites_source
+    value: reembolso.md
+    turn: 4
+  - type: tool_not_called
+    value: escalate_to_human
+expected_doc:
+  - cancelamento.md
+  - reembolso.md
+judge:
+  - tone
+behaviors:
+  - source_citation
+  - rn_calculable
+  - multi_turn
+  - escalation_not_needed
+expected_outcome: refund_card_2_invoices

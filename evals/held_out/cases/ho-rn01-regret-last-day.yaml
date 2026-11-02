@@ -1,0 +1,27 @@
+id: ho-rn01-regret-last-day
+suite: capability
+rule: RN01
+today: "2026-11-03"
+turns:
+  - "Oi, meu CPF é 00000000272. Comprei as bolinhas e o comedouro do pedido PED-10004 e quero devolver por arrependimento. Ainda dá tempo?"
+checks:
+  - type: tool_called
+    value: get_order
+    args:
+      order_number: PED-10004
+  - type: mentions_order
+    value: PED-10004
+  - type: cites_source
+    value: troca-e-devolucao.md
+  - type: expected_value
+    value: ["dentro do prazo", "ainda está no prazo", "ainda dá tempo", "ainda pode", "último dia", "hoje é o 7"]
+  - type: must_not_include
+    value: ["fora do prazo", "prazo expirou", "prazo expirado", "passou do prazo", "não é mais possível devolver"]
+expected_doc: troca-e-devolucao.md
+judge:
+  - tone
+behaviors:
+  - source_citation
+  - rn_calculable
+  - escalation_not_needed
+expected_outcome: regret_allowed
