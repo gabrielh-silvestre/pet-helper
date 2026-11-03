@@ -40,7 +40,8 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 - MSC layering (Model, Service, Controller); LangGraph used directly, Deep Agents rejected.
 - Anthropic models as primary provider; Llama in Docker as the no-paid-key path for evaluators; model and endpoint configurable by environment variable.
 - Order access (ADR 0001): the Customer identifies by CPF in the conversation and an Order is shown only when that CPF owns it and the order number is given. Identity is injected by the backend, never passed as a tool argument. A missing Order and another Customer's Order collapse into one `NOT_FOUND` before the model sees them.
-- Architecture baseline in `docs/architecture.md` (owner-approved 2026-10-28): model per role, masked JSONL tracing, BM25 retrieval, the module map, the eval harness. Business rules live in the policies, tools return facts (ADR 0002).
+- Architecture baseline in `docs/architecture.md` (owner-approved 2026-10-28): model per role, OpenTelemetry spans (OpenLLMetry) masked by one exporter and sent to a local file or, with `LANGSMITH_API_KEY`, to LangSmith (ADR 0003, amended 2026-11-03), BM25 retrieval, the module map, the eval harness. Business rules live in the policies, tools return facts (ADR 0002).
+- DSPy runs only offline, in the `optimize` module behind the `optimize` extra; the result enters the runtime as committed text, never as a live program (ADR 0004). Judge and assistant prompt candidates follow their own accept rules; held-out cases never enter an optimizer.
 
 ## Working rules
 
@@ -50,7 +51,7 @@ Agent guards live in `.claude/settings.json`. Native `permissions.deny` rules bl
 <!-- Paused on 2026-10-30 (agy quota exhausted; owner chose Claude subagents only). To re-enable, replace the bullet above with:
 - TDD split: the `test-engineer` writes the failing tests; the `executor` never edits them. In the `/deliver` TDD loop both run on `agy` (Gemini 4 Argon High) through `omc ask antigravity`, outside the agent hooks, so the main session runs those checks after each call.
 -->
-- Nothing that calls the real model runs automatically (no git hook, CI or schedule). Eval rounds are manual, show a cost estimate first and stop at US$5.
+- Nothing that calls the real model runs automatically (no git hook, CI or schedule). Eval rounds and `pet-helper optimize` runs are manual, show a cost estimate first and stop at US$5; an agent never runs them (the paid-command hook blocks `pet-helper eval`, `pet-helper optimize`, `judge smoke` and `labels judge-pool`).
 - Commit directly on `main` while the work is docs and setup; once code delivery starts, one branch and one `wt` worktree per unit, a PR, and only the owner merges.
 - Commits: Conventional Commits, subject only, up to 80 characters.
 - Language: `docs/` is Portuguese; agent-facing files (this file, `AGENTS.md`, skills, `GLOSSARY.md`, ADRs), code and tests are English.

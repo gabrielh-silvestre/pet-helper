@@ -10,13 +10,14 @@ O código segue as camadas MSC (Model, Service, Controller), com o LangGraph usa
 
 | Camada | Módulo | O que esconde |
 |---|---|---|
-| Controller | `cli` | os comandos `chat`, `eval` e `metrics` |
+| Controller | `cli` | os comandos `chat`, `eval`, `metrics` e `optimize` |
 | Service | `conversation` | o grafo do LangGraph, o prompt, o registro de tools, a identidade do cliente da sessão e o contador de falhas repetidas |
 | Service | `guard` | a detecção e a máscara de dado pessoal (Presidio e reconhecedor de CPF próprio), a heurística de injection e a checagem de SKU e de fonte na resposta |
 | Service | `evals` | os checks puros, o juiz, a rodada sobre o Inspect AI e a análise de erro |
+| Service | `optimize` | o DSPy, offline, para o juiz e o prompt do assistente; só existe com o extra `optimize` |
 | Model | `gateway` | o provedor (Anthropic ou Ollama), o esforço, o cache de prompt, o retry e o fallback |
 | Model | `knowledge`, `orders`, `catalog` | a busca BM25 nas políticas, a API mock de pedidos e o catálogo em CSV |
-| Transversal | `trace` | o formato do JSONL, o callback do LangChain, a máscara no destino e o custo |
+| Transversal | `trace` | os spans OpenTelemetry (OpenLLMetry), o callback do LangChain, a máscara na frente de todo exporter, o destino (arquivo ou LangSmith) e o custo |
 
 Um turno percorre o grafo assim:
 
@@ -58,6 +59,8 @@ As ferramentas são `search_policies`, `get_order`, `search_catalog` e `escalate
 | `PET_HELPER_KIT_DIR` | diretório do kit (padrão `kit`, relativo ao diretório de trabalho) |
 | `PET_HELPER_TODAY` | data de hoje do assistente, no formato `AAAA-MM-DD` |
 | `PET_HELPER_TRACE_CONTENT` | `0` grava só o tamanho do texto livre no rastro |
+| `LANGSMITH_API_KEY` | liga o envio dos spans, já mascarados, para a LangSmith; sem ela, os spans só vão para arquivo |
+| `LANGSMITH_PROJECT` | projeto da LangSmith (padrão `pet-helper`) |
 
 ## Trade-offs
 
@@ -65,7 +68,8 @@ As ferramentas são `search_policies`, `get_order`, `search_catalog` e `escalate
 - **BM25 contra embeddings.** Com 8 documentos de 150 a 400 palavras, BM25 reindexa em milissegundos sem baixar modelo, o que a alteração ao vivo exige. O custo é não casar sinônimos que o stemmer não cobre.
 - **Documento inteiro, sem limiar de score.** A citação fica trivial e cabe no contexto, mas o "não sei" depende do modelo seguir o prompt. Um limiar erraria justamente nos temas de propósito fora da cobertura, que dividem termos com políticas reais.
 - **Resposta só depois do guard de saída.** O cliente não vê um SKU inventado antes do bloqueio, ao custo de latência percebida. Em produção o caminho seria streaming por sentença já checada.
-- **Rastro próprio em JSONL, não Phoenix, LangSmith nem o SDK do OpenTelemetry.** Quem avalia não precisa subir processo nem abrir conta, e a máscara fica num ponto só. Os nomes das chaves seguem o OpenTelemetry GenAI, o que mantém um exportador futuro barato.
+- **Spans OpenTelemetry do OpenLLMetry, com a LangSmith opcional.** A biblioteca cria os spans de modelo e de tool, e o código nosso só acrescenta o que ela não mede (TTFT, custo, eventos de domínio, dados de tool). Sem chave, os spans vão para um arquivo local e quem avalia não precisa de conta nem de processo; com `LANGSMITH_API_KEY`, vão também para a LangSmith. A máscara fica num ponto só, na frente de todo exporter. O preço é acoplar a um atributo interno de um pacote 0.x, para obter o TTFT no span da biblioteca ([ADR 0003](docs/adr/0003-otel-langsmith.md)).
+- **DSPy só offline.** Otimiza os exemplos do juiz e o prompt do assistente a pedido do dono, e o resultado entra no código como texto commitado, nunca como programa DSPy em execução. Custa um extra opcional e um resultado do juiz sem poder estatístico (o teste tem 4, 2 e 2 itens) ([ADR 0004](docs/adr/0004-dspy-offline-optimizer.md)).
 - **Presidio na máscara.** É o padrão de mercado, ao custo de cerca de 316 MB de instalação. Ele não traz CPF, que segue como reconhecedor próprio.
 - **Inspect AI como motor da eval.** Entrega épocas, logs locais sem conta e visualizador, e sobra para o projeto só o que é dele (casos YAML multi-turno, juiz com `unable`, freio de custo por comando). O preço é uma dependência pré-1.0, fixada no `uv.lock`.
 - **Turnos fixos nos casos de eval.** Um usuário simulado por LLM reagiria à resposta, mas custaria chamadas e quebraria o determinismo. Quando o assistente pede o que o roteiro não prevê, a execução vira `unable`, não falha.
@@ -80,7 +84,7 @@ uv sync
 PET_HELPER_TODAY=2026-11-03 uv run pet-helper chat
 ```
 
-O otimizador offline (`pet-helper optimize judge`) é opcional e exige o extra: `uv sync --extra optimize`.
+Os otimizadores offline (`pet-helper optimize judge` e `pet-helper optimize assistant`) são opcionais e exigem o extra: `uv sync --extra optimize`.
 
 `PET_HELPER_TODAY` fixa a data de hoje do assistente. Sem ela, o assistente usa a data real, e os prazos dos pedidos do kit (calculados a partir de 2026-11-03, a `reference_date` de `kit/orders.json`) saem errados.
 
@@ -112,31 +116,35 @@ Built with Llama (Meta Llama 3.1, sob a Llama 3.1 Community License).
 
 ## Rastros da conversa
 
-O `pet-helper chat` grava um rastro em `traces/AAAA-MM-DD/<session_id>.jsonl`, relativo ao diretório de trabalho: um arquivo por sessão, uma linha por evento. Nas rodadas de eval, os rastros ficam em `traces/` dentro da pasta da rodada. Exemplo de linha, de uma sessão com o modelo simulado:
+O `pet-helper chat` grava os spans OpenTelemetry de cada turno em `traces/AAAA-MM-DD/spans/<session_id>.jsonl`, relativo ao diretório de trabalho: um arquivo por sessão, uma linha por span (o JSON do SDK do OpenTelemetry). Nas rodadas de eval, os arquivos ficam em `traces/spans/` dentro da pasta da rodada. Cada turno é um trace: o span raiz `turn` leva `session_id` e `turn`, e os spans de modelo, de tool e do LangGraph descendem dele. Exemplo de span de tool, de uma sessão com o modelo simulado (campos principais, sem os atributos `traceloop.*` da biblioteca):
 
 ```json
-{"ts": "2026-10-31T07:28:14.212741+00:00", "session_id": "sessao-1", "turn": 1, "event": "turn.start", "trace_id": "sessao-1:1", "gen_ai.input.messages": "Oi, meu CPF é cpf#e774ebd4"}
+{"name": "execute_tool get_order", "parent_id": "0xf0c044aee1d0f4e3", "attributes": {"session_id": "sessao-1", "turn": 1, "gen_ai.tool.name": "get_order", "gen_ai.tool.call.arguments": "{\"order_number\": \"PED-10001\"}", "gen_ai.tool.call.result": "{\"status\": \"not_found\"}", "pet_helper.status": "ok", "langsmith.span.kind": "tool"}}
 ```
 
-Toda linha traz `ts`, `session_id`, `turn`, `event` e `trace_id` (`<session_id>:<turn>`). Os eventos e as chaves principais:
+A biblioteca OpenLLMetry cria os spans de modelo e de tool. O código do projeto escreve nesses spans o que ela não mede, e os eventos de domínio vão no raiz:
+
+| Span | Atributos que o projeto grava |
+|---|---|
+| `turn` (raiz) | `gen_ai.input.messages` e `gen_ai.output.messages` (a mensagem do cliente e a resposta, em JSON), `pet_helper.sources`, `langsmith.span.kind`, `langsmith.metadata.*` |
+| modelo | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.server.time_to_first_token` (segundos), tokens de entrada e saída, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, `pet_helper.cost_usd`, `pet_helper.price_unknown`, `pet_helper.fallback`, `pet_helper.streaming` |
+| `execute_tool <tool>` | `gen_ai.tool.name`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`, `pet_helper.status`, `error.message` |
+
+Os eventos de domínio são span events do raiz do turno:
 
 | Evento | Chaves |
 |---|---|
-| `turn.start` | `gen_ai.input.messages` |
 | `guard.input` | `pet_helper.cpf_identified`, `pet_helper.cpf_conflict`, `pet_helper.injection_suspected` |
 | `retrieval` | `gen_ai.retrieval.query.text`, `pet_helper.hits` (fonte e score de cada documento) |
-| `model.call` | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.response.time_to_first_chunk`, `duration_ms`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.response.finish_reasons`, `pet_helper.fallback`, `pet_helper.streaming`, `pet_helper.cost_usd`, `pet_helper.price_unknown`, `error.type` |
-| `tool.call` | `gen_ai.tool.name`, `gen_ai.tool.call.arguments`, `duration_ms`, `pet_helper.status`, `error.message` |
 | `order.refused` | `pet_helper.reason` (`not_found` ou `other_customer`) |
 | `guard.output` | `pet_helper.invalid_skus`, `pet_helper.unretrieved_sources`, `pet_helper.regenerated` |
 | `escalation` | `pet_helper.escalation_reason` |
-| `turn.end` | `gen_ai.output.messages`, `pet_helper.sources` |
 
-As linhas `model.call` e `tool.call` levam também `span_id` e `parent_span_id`, copiados do `run_id` e do `parent_run_id` do LangChain. Os ids de correlação não são os ids hexadecimais de 32 e 16 caracteres do OpenTelemetry; um exportador futuro faz o mapeamento. A tabela completa do nosso formato para a convenção OpenTelemetry GenAI está em [docs/architecture.md](docs/architecture.md), seção 2.
-
-- **Máscara.** Cada texto passa por `Guard.mask` no destino: CPF vira o pseudônimo estável `cpf#<8 hex>`, e e-mail e telefone são substituídos. Depois da máscara, o texto é truncado em 10.000 caracteres e a linha vai por `json.dumps`.
-- **Interruptor de conteúdo.** O texto livre vem ligado por padrão, mascarado, para que o rastro explique a resposta. Com `PET_HELPER_TRACE_CONTENT=0`, os campos `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.retrieval.query.text` e `gen_ai.tool.call.arguments` gravam só o tamanho. As rodadas de eval sempre rodam com o conteúdo ligado, porque a análise de erro lê as conversas.
-- **Tempo até o primeiro chunk.** Conta o primeiro chunk com texto, em segundos, e fica nulo quando a chamada não fez streaming. Com thinking ligado, o valor inclui o tempo de raciocínio que antecede o texto. Um teste sem modelo varre os rastros de exemplo atrás de CPF e e-mail crus, e cada rodada de eval repete essa varredura em seus arquivos.
+- **Destinos.** O arquivo local é sempre gravado. Com `LANGSMITH_API_KEY`, os mesmos spans também vão para a LangSmith (projeto em `LANGSMITH_PROJECT`, padrão `pet-helper`), e as rodadas de eval deixam lá os traces das conversas. Sem a chave, nada sai da máquina e o assistente funciona igual. A decisão está no [ADR 0003](docs/adr/0003-otel-langsmith.md).
+- **Máscara.** O `MaskingSpanExporter` fica na frente de todo exporter, o do arquivo e o da LangSmith, e passa cada texto do span por `Guard.mask`: CPF vira o pseudônimo estável `cpf#<8 hex>`, e e-mail e telefone são substituídos. Depois da máscara, o texto é truncado em 10.000 caracteres.
+- **Interruptor de conteúdo.** O texto livre vem ligado por padrão, mascarado, para que o rastro explique a resposta. Com `PET_HELPER_TRACE_CONTENT=0`, os campos `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.retrieval.query.text`, `gen_ai.tool.call.arguments` e `gen_ai.tool.call.result` gravam só o tamanho. As rodadas de eval sempre rodam com o conteúdo ligado, porque a análise de erro lê as conversas. A captura de conteúdo do OpenLLMetry fica sempre desligada: o prompt de sistema e as respostas intermediárias do modelo não entram no rastro.
+- **Tempo até o primeiro chunk.** `gen_ai.server.time_to_first_token` conta o primeiro chunk com texto, em segundos, e fica ausente quando a chamada não fez streaming. Com thinking ligado, o valor inclui o tempo de raciocínio que antecede o texto. Um teste sem modelo varre os rastros de exemplo atrás de CPF e e-mail crus, e cada rodada de eval repete essa varredura em seus arquivos.
+- **Formato antigo.** Rodadas gravadas no JSONL de um evento por linha, de antes dos spans, não são lidas pelo `pet-helper metrics`.
 
 ## Como rodar o eval
 
@@ -151,6 +159,7 @@ uv run pet-helper eval --judge batch                     # juiz pela Message Bat
 uv run pet-helper eval --collect <rodada>                # termina uma rodada com lote pendente
 uv run pet-helper eval --rejudge <rodada>                # aplica o juiz às transcrições salvas
 uv run pet-helper eval --case <caso> --runs 10           # repetição de um caso decisivo
+uv run pet-helper eval --system-prompt-file <arquivo>    # mede um prompt candidato no lugar do atual
 PET_HELPER_HELD_OUT=1 uv run pet-helper eval --held-out --judge none
 ```
 
@@ -171,7 +180,7 @@ Cada rodada grava uma pasta `evals/results/AAAA-MM-DDTHHMMSS/`:
 | `*.eval` | o log do Inspect: conversas mascaradas, checks e tokens, que `uv run inspect view --log-dir <pasta>` abre no navegador |
 | `judge.jsonl` | a crítica e o veredito do juiz, a fonte única dos vereditos |
 | `cases.csv` | uma linha por caso: `case_id`, `suite`, `k_of_3`, `first_failure_note`, `category`, `human_label`, `cost_usd`, `failed_checks`, `unable_runs`, `unable_reasons` |
-| `traces/` | os rastros JSONL de cada conversa |
+| `traces/spans/` | os spans OpenTelemetry de cada conversa, um arquivo por sessão |
 
 Cada execução termina em `pass`, `fail`, `error`, `unable` ou `not_run`, e só `pass` conta no k. Execução `unable` (conversa fora do roteiro ou juiz sem condição de avaliar) não é passa nem falha e fica fora das categorias de falha.
 
@@ -191,6 +200,20 @@ uv run pet-helper eval --runs 1 --case rn03-south-exact-149-not-free
 
 A saída leva `{"smoke": true, "runs": 1}`. A fumaça não conta como rodada, nunca decide aceitação e não grava em `evals/results/`: resultados e rastros vão para uma pasta temporária `pet-helper-smoke-*`, cujo caminho é a última linha da saída. A rodada completa continua exigindo as 3 execuções.
 
+### Otimizadores offline (DSPy)
+
+Dois comandos pagos e manuais, que exigem `uv sync --extra optimize`. Sem o extra, o comando imprime a instrução de instalação e termina com erro. Cada um mostra a estimativa, pede confirmação e para antes de US$ 5. O hook do agente os bloqueia como bloqueia `pet-helper eval`: só o dono os roda.
+
+```sh
+uv run pet-helper optimize judge <rodada>            # exemplos do juiz (BootstrapFewShot)
+uv run pet-helper optimize assistant <alvos.json>    # prompt do assistente (GEPA)
+```
+
+- **`optimize judge`.** Exige os 18 rótulos humanos do pool da rodada e uma leitura do teste feita antes pelo juiz atual (`labels judge-pool --split test`). Treina só nos itens de dev, deixa o candidato ler o teste uma vez e o mantém só se o TPR e o TNR de teste de cada critério forem iguais ou melhores que os do juiz atual; senão restaura o `judge.py`. O piso de Wilson foi dispensado pelo dono para esta unidade: o relatório mostra os intervalos, e o `labels/floor.json` da rodada tem piso 0.
+- **`optimize assistant`.** O `alvos.json` mapeia `case_id` para `prompt` ou `checker`, pela classificação do dono, e só os de `prompt` são alvo. O GEPA treina nos casos visíveis, 10 para treino e 10 para validação, nunca nos reservados, e o comando recusa rodar com `PET_HELPER_HELD_OUT=1`. O candidato vai para `.ignore/assistant-prompt-candidate.txt` e o `prompt.py` não muda. Para medi-lo, rode `uv run pet-helper eval --system-prompt-file .ignore/assistant-prompt-candidate.txt --judge none`. Ele só substitui o prompt atual se passar pelo "aceitar ou rejeitar" do [loop-melhoria.md](docs/directives/loop-melhoria.md), com os casos reservados.
+
+O resultado de cada alvo (aceito ou rejeitado, gasto e números) fica no [ADR 0004](docs/adr/0004-dspy-offline-optimizer.md), que ainda não os traz: os passos pagos dependem do dono.
+
 ## Métricas com `pet-helper metrics`
 
 ```sh
@@ -198,7 +221,7 @@ uv run pet-helper metrics traces/2026-11-03
 uv run pet-helper metrics evals/results/<rodada>/traces
 ```
 
-O comando lê os JSONL da pasta, sem chamar modelo, e imprime:
+O comando lê os arquivos de spans (`spans/*.jsonl`) da pasta, sem chamar modelo, e imprime:
 
 - por provider e modelo: chamadas, tempo até o primeiro chunk (p50 e p95, em ms), chamadas sem streaming (`ttft_missing`), tokens por segundo mediano depois do primeiro chunk, tokens de entrada, saída, cache read e cache write, custo em US$ e taxa de acerto do cache (`cache_read / input_tokens`);
 - por tool: chamadas e taxa de erro;
@@ -206,7 +229,7 @@ O comando lê os JSONL da pasta, sem chamar modelo, e imprime:
 - escalonamentos por motivo;
 - por conversa: custo em US$ e latência em segundos.
 
-O custo vem da `genai-prices` por `cost_usd`, e o Ollama custa zero.
+O custo é o atributo `pet_helper.cost_usd` do span de modelo, calculado pela `genai-prices`, e o Ollama custa zero. Rodadas gravadas no formato antigo (JSONL de um evento por linha, de antes dos spans) não são lidas por este comando.
 
 ## Premissas de custo
 
@@ -231,6 +254,7 @@ O Batch tem 50% de desconto sobre esses preços, e o Ollama custa zero. Os preç
 - **Conversa de 4 turnos (premissa).** Cerca de 6 chamadas ao modelo, cada uma com uns 3,9K tokens de entrada e uns 250 de saída. Dá cerca de US$ 0,003 sem cache.
 - **Estimativa do comando `eval`.** Sem rodada anterior, usa US$ 0,004 por turno e por execução; com rodada anterior, usa a média por caso dela. Cada chamada do juiz entra com uma estimativa padrão de US$ 0,007.
 - **Latência.** Não há premissa: o tempo até o primeiro chunk e a duração por conversa só entram medidos, pelo `pet-helper metrics`, na seção de resultados.
+- **Otimizadores offline.** A unidade que adotou o OpenTelemetry e o DSPy tem um teto de US$ 30 no total, e cada comando `pet-helper optimize` mostra a estimativa, pede confirmação e para antes de US$ 5. O gasto medido entra no [ADR 0004](docs/adr/0004-dspy-offline-optimizer.md) quando os passos pagos rodarem; hoje o ADR não traz nenhum valor.
 
 ## Limitações do juiz
 
@@ -244,6 +268,7 @@ O juiz por modelo avalia só tom, julgamento de escalonamento e acerto do "não 
 - **Turnos fixos.** Os turnos são roteirados e não reagem à resposta. Um assistente que pede um dado que o roteiro não previu deixa a execução `unable`, e o juiz não mede esse desvio.
 - **Suíte pequena.** São 20 casos visíveis, então o intervalo de Wilson do pass^3 da suíte é largo e um caso muda a taxa em 5 pontos percentuais.
 - **Juiz Llama não validado.** O mesmo prompt pode rodar no `llama3.1:8b`, um juiz pequeno de concordância esperada menor. Esta entrega valida só o Sonnet, e o juiz Llama não foi validado contra rótulos humanos: nenhum veredito dele decide aceitação.
+- **Otimização do juiz sem poder estatístico.** O teste tem 4, 2 e 2 itens por critério, e o intervalo de Wilson com n = 4 tem meia-largura acima de 0,3. A regra "igual ou melhor" pode aceitar ruído, então o veredito do `optimize judge` vem da regra, não de evidência.
 - **Validação vale para um par.** A validação cobre o modelo do juiz e o prompt congelado, identificados por um hash que acompanha cada veredito. Mudar um dos dois exige validar de novo.
 
 ## Limitações dos checks de texto
@@ -285,8 +310,8 @@ O critic da cadeira do dono anota cada falha primeiro: uma nota sobre a primeira
 
 Quando uma conversa real falha por um bug do grafo, de um guard ou de uma tool, e não por uma resposta ruim do modelo, ela vira um teste de regressão sem modelo, escrito à mão com o `FakeGateway`:
 
-1. Abra o rastro da sessão e confirme que o erro está no código: o que a tool devolveu, o que o guard deixou passar, o estado da sessão. Falha de redação ou de julgamento do modelo não se reproduz com modelo simulado e pede um caso de eval.
-2. Monte o roteiro do modelo a partir do rastro: cada chamada a tool (`tool.call`, com `gen_ai.tool.name` e `gen_ai.tool.call.arguments`) vira uma `AIMessage` com `tool_calls`, e a resposta final (`turn.end`) vira uma string. O rastro mascara o CPF; use no teste um CPF do kit.
+1. Abra os spans da sessão (`spans/<session_id>.jsonl`) e confirme que o erro está no código: o que a tool devolveu, o que o guard deixou passar, o estado da sessão. Falha de redação ou de julgamento do modelo não se reproduz com modelo simulado e pede um caso de eval.
+2. Monte o roteiro do modelo a partir do rastro: cada chamada a tool (o span `execute_tool <tool>`, com `gen_ai.tool.name` e `gen_ai.tool.call.arguments`) vira uma `AIMessage` com `tool_calls`, e a resposta final (`gen_ai.output.messages` do span `turn`) vira uma string. O rastro mascara o CPF; use no teste um CPF do kit.
 3. Chame `Assistant.turn` com as mensagens do cliente e confira a resposta e o que o modelo recebeu em `gateway.calls`.
 4. Guarde o teste em `tests/unit/`, com o nome no formato `it should ...`.
 
@@ -337,7 +362,7 @@ Um script que gere esse teste a partir do rastro fica como trabalho futuro. Ele 
 - Construir o script que transforma uma transcrição que falhou em teste com `FakeGateway`.
 - Medir o assistente com um usuário simulado que reage à resposta, para cobrir o que os turnos fixos não cobrem, aceitando o custo e a variação.
 - Aumentar a suíte e os casos reservados para estreitar os intervalos de confiança, e fazer o especialista anotar mais conversas antes do critic.
-- Em produção: streaming por sentença já checada pelo guard, exportar o rastro para um backend de OpenTelemetry (a troca de destino mexe só no módulo `trace`), limite de taxa, filas e cache semântico.
+- Em produção: streaming por sentença já checada pelo guard, apontar os spans para um backend de OpenTelemetry de produção, com amostragem e retenção (a troca de destino mexe só no módulo `trace`), limite de taxa, filas e cache semântico.
 - Embeddings locais, se o corpus de políticas crescer a ponto de o BM25 não bastar.
 - Um visualizador HTML das conversas, se ler no terminal e no `inspect view` fizer falta.
 

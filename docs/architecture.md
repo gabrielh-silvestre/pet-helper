@@ -1,6 +1,6 @@
 # Arquitetura
 
-Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 28/10/2026 numa rodada de bootstrap sem spec nem plano: as perguntas vieram direto do dono. Cada unidade de trabalho seguinte registra o que acrescenta em `docs/specs/<slug>/architecture.md` e aponta para esta. Toda decisão nasce com `origin: simulated` e passa a `simulated-approved` com o aval do dono; as desta linha de base foram aprovadas pelo dono em 28/10/2026. Em 29/10/2026 o dono revisou o que já existia pronto na comunidade e trocou peças próprias por ferramentas curadas: `genai-prices` e callback do LangChain no tracing, Presidio na máscara e Inspect AI na eval (decisões 2, 4 e 5, `origin: owner`). Em 30/10/2026 a unidade de entrega dos evals emendou as seções 2, 4 e 5 ([specs/eval-delivery/architecture.md](specs/eval-delivery/architecture.md)). Os fatos de modelo e preço foram conferidos em 28/10/2026 em `platform.claude.com/docs/en/about-claude/pricing` e `.../build-with-claude/prompt-caching`; os do Ollama, em `docs.ollama.com` e `hub.docker.com/r/ollama/ollama`.
+Linha de base da arquitetura do pet-helper, decidida pelo critic da cadeira em 28/10/2026 numa rodada de bootstrap sem spec nem plano: as perguntas vieram direto do dono. Cada unidade de trabalho seguinte registra o que acrescenta em `docs/specs/<slug>/architecture.md` e aponta para esta. Toda decisão nasce com `origin: simulated` e passa a `simulated-approved` com o aval do dono; as desta linha de base foram aprovadas pelo dono em 28/10/2026. Em 29/10/2026 o dono revisou o que já existia pronto na comunidade e trocou peças próprias por ferramentas curadas: `genai-prices` e callback do LangChain no tracing, Presidio na máscara e Inspect AI na eval (decisões 2, 4 e 5, `origin: owner`). Em 30/10/2026 a unidade de entrega dos evals emendou as seções 2, 4 e 5 ([specs/eval-delivery/architecture.md](specs/eval-delivery/architecture.md)). Em 03/11/2026 a unidade `market-tools-adoption` emendou as seções 2, 4 e 5 ([specs/market-tools-adoption/architecture.md](specs/market-tools-adoption/architecture.md)): spans OpenTelemetry no lugar do JSONL próprio ([ADR 0003](adr/0003-otel-langsmith.md)), o módulo `optimize` com o DSPy fora do runtime ([ADR 0004](adr/0004-dspy-offline-optimizer.md)) e o modo do juiz das rodadas de paridade. Os fatos de modelo e preço foram conferidos em 28/10/2026 em `platform.claude.com/docs/en/about-claude/pricing` e `.../build-with-claude/prompt-caching`; os do Ollama, em `docs.ollama.com` e `hub.docker.com/r/ollama/ollama`.
 
 ## 1. Modelo por papel
 
@@ -40,73 +40,63 @@ O Haiku 5.5 é o modelo fraco e barato que a premissa `qualidade-vem-do-sistema`
 
 ## 2. Tracing e observabilidade
 
+Emendada em 2026-11-03 pela unidade `market-tools-adoption` ([specs/market-tools-adoption/architecture.md](specs/market-tools-adoption/architecture.md), [ADR 0003](adr/0003-otel-langsmith.md)): o JSONL próprio deu lugar a spans OpenTelemetry. A escolha de 2026-10-29 de não usar OpenTelemetry nem LangSmith foi revertida; o que continua rejeitado está nas alternativas abaixo.
+
 ### Escolha
 
-- Trace próprio em JSONL, um arquivo por sessão: `traces/<AAAA-MM-DD>/<session_id>.jsonl` no chat, e dentro da pasta da rodada na eval.
-- Cada linha traz `ts`, `session_id`, `turn` e `event`. Os eventos são:
-  - `turn.start`: texto do usuário, mascarado.
-  - `guard.input`: CPF detectado, suspeita de injection.
-  - `retrieval`: query, hits com `source` e `score`.
-  - `model.call`: provider, modelo, tempo até o primeiro chunk, `duration_ms`, tokens de entrada e saída, tokens de cache read e write, motivo de parada, `fallback` (as chaves gravadas estão na tabela abaixo).
-  - `tool.call`: nome, argumentos, status, erro de validação e motivo interno. No `get_order`, o motivo é `not_found` ou `other_customer` ([ADR 0001](adr/0001-order-access-by-cpf-and-order-number.md)).
-  - `guard.output`: SKUs inválidos, fonte não recuperada.
-  - `escalation`: motivo.
-  - `turn.end`: resposta mascarada, fontes citadas.
-- As chaves são planas e seguem os nomes do OpenTelemetry GenAI, com o prefixo `pet_helper.*` para o que a convenção não cobre; a tabela abaixo da lista mapeia o nosso para o OTel. A fonte da convenção é o `client-inference.md` do repositório `open-telemetry/semantic-conventions-genai`, consultado em 30/10/2026, onde todos os atributos têm status Development.
-- Ids de correlação: toda linha leva `trace_id` (`<session_id>:<turn>`), e as linhas `model.call` e `tool.call` levam também `span_id` e `parent_span_id` (o `run_id` e o `parent_run_id` do LangChain). Não são ids do OTel, que têm 32 e 16 caracteres hexadecimais: um exportador futuro faz o mapeamento. Os ids de span não passam pela máscara, porque são opacos e uma sequência de dígitos poderia ser lida como telefone.
-- Interruptor de conteúdo: `PET_HELPER_TRACE_CONTENT` vem ligado por padrão, no chat e nas rodadas de eval (o runner fixa o valor `1`), e o texto livre sai mascarado. Com `PET_HELPER_TRACE_CONTENT=0`, os campos `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.retrieval.query.text` e `gen_ai.tool.call.arguments` gravam só o tamanho.
-- Ordem no sink: cada texto passa por `Guard.mask`, depois é truncado em 10.000 caracteres (o corte acrescenta `[truncated N chars]`) e por fim a linha vai por `json.dumps`, que escapa o que não é ASCII, de modo que um texto com quebra de linha não parte o JSONL.
-- A máscara é aplicada num único ponto, o sink do trace, por `Guard.mask`:
+- Spans OpenTelemetry, um trace por turno. A instrumentação do LangChain do OpenLLMetry (`opentelemetry-instrumentation-langchain`, fixada em `>=0.62.4,<0.63`) cria os spans de modelo e de tool. O span raiz `turn` é nosso e leva `session_id` e `turn`; os spans do OpenLLMetry descendem dele, com os spans `execute_task` e `invoke_agent` do LangGraph no meio (um por nó e por roteamento). A conversa se agrupa pelo `session_id`.
+- Destinos:
+  - Arquivo, sempre: `traces/<AAAA-MM-DD>/spans/<session_id>.jsonl` no chat, e `traces/spans/<session_id>.jsonl` dentro da pasta da rodada na eval. Uma linha por span, no JSON do SDK do OpenTelemetry (`to_json`).
+  - LangSmith, só com `LANGSMITH_API_KEY`: OTLP em `https://api.smith.langchain.com/otel/v1/traces`, no projeto `LANGSMITH_PROJECT` (padrão `pet-helper`). Sem a chave, nada sai da máquina e o assistente se comporta igual. O tracer próprio da LangSmith fica desligado (`tracing_context`), porque as runs dele levariam texto sem máscara.
+- O código nosso por cima da biblioteca é pontual e escreve no span de cada execução (`run_id`):
+  - Modelo: tempo até o primeiro chunk em `gen_ai.server.time_to_first_token` (em segundos; ausente quando a chamada não fez streaming), custo, `pet_helper.fallback`, `pet_helper.streaming`, tokens de cache e, no caminho de erro do freio de custo, tokens e status. Os tokens de entrada e saída do caminho normal vêm do OpenLLMetry.
+  - Tool: o span se chama `execute_tool <tool>` e leva argumentos, resultado (o `OrderView` da allowlist ou o texto da busca), `pet_helper.status` e `error.message`.
+  - Eventos de domínio entram como span events do raiz do turno, com os campos `pet_helper.*`: `guard.input` (CPF detectado, suspeita de injection), `retrieval` (query e hits com `source` e `score`), `order.refused` (`not_found` ou `other_customer`, [ADR 0001](adr/0001-order-access-by-cpf-and-order-number.md)), `guard.output` (SKUs inválidos, fonte não recuperada) e `escalation` (motivo). A mensagem do cliente e a resposta vão como `gen_ai.input.messages` e `gen_ai.output.messages` do raiz, em JSON de mensagens, com as fontes citadas em `pet_helper.sources`.
+  - Espelho para a LangSmith: TTFT, custo, `session_id`, `turn` e cada evento de domínio também saem em `langsmith.metadata.*`, e `langsmith.span.kind` marca o raiz como `chain`, o modelo como `llm` e a tool como `tool`.
+- Os nomes seguem a convenção OpenTelemetry GenAI, com o prefixo `pet_helper.*` para o que ela não cobre (`cost_usd`, `price_unknown`, `fallback`, `streaming`, `status`). A fonte da convenção é o `client-inference.md` do repositório `open-telemetry/semantic-conventions-genai`, consultado em 30/10/2026, onde todos os atributos têm status Development.
+- Interruptor de conteúdo: `PET_HELPER_TRACE_CONTENT` vem ligado por padrão, no chat e nas rodadas de eval (o runner fixa o valor `1`), e o texto livre sai mascarado. Com `PET_HELPER_TRACE_CONTENT=0`, os campos `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.retrieval.query.text`, `gen_ai.tool.call.arguments` e `gen_ai.tool.call.result` gravam só o tamanho. A captura de conteúdo do próprio OpenLLMetry fica sempre desligada (`TRACELOOP_TRACE_CONTENT=false`), porque o prompt do modelo leva dados de pedido fora da allowlist. O prompt de sistema, texto fixo do repositório, e as respostas intermediárias do modelo não entram no trace.
+- A máscara é aplicada num único ponto, o `MaskingSpanExporter`, que fica na frente de todo exporter (arquivo e OTLP), por `Guard.mask`:
   - A detecção usa o Presidio (`presidio-analyzer` e `presidio-anonymizer`) só com regex, no motor `no_op`, sem modelo de NLP: e-mail e telefone pelos reconhecedores nativos (região BR) e CPF por um `PatternRecognizer` nosso, aplicado antes do telefone, porque 11 dígitos colidem com ele.
   - CPF, com ou sem formatação, vira o pseudônimo estável `cpf#<8 hex>` (HMAC-SHA256 com o sal de `PET_HELPER_TRACE_SALT`; sem a variável, um sal aleatório por processo). Todo número com formato de CPF é mascarado, mesmo com dígitos verificadores inválidos; a validação só decide se ele vincula o Session Customer.
   - E-mail e telefone são substituídos.
+  - A máscara cobre nome do span, atributos, eventos, descrição do status, links e eventos de exceção. As chaves opacas, que são nomes e ids escolhidos por nós, pelo runtime ou pelo provedor (provider, modelo, nome da tool, `error.type`, `session_id`, `langsmith.span.kind`), são listadas pelo nome exato, nunca por prefixo: um id só de dígitos seria lido como telefone. Qualquer outra chave, o espelho `langsmith.metadata.*` incluído, é mascarada como string comum.
+  - Depois da máscara, cada texto é truncado em 10.000 caracteres (o corte acrescenta `[truncated N chars]`).
+  - O `SpanProcessor.on_end` recebe o span somente leitura, então a máscara tem que acontecer na exportação, e a rota do arquivo da sessão lê o `session_id` antes dela.
 - O pedido entra no trace e no modelo como `OrderView`, com uma allowlist de campos: número, status, itens, total, região, meio de pagamento, data de entrega e dias desde a entrega. Nome e endereço nunca saem do módulo de pedidos.
 - O CPF digitado pelo cliente é trocado por `[CPF informado]` antes de chegar ao modelo. O backend guarda o CPF no estado da sessão como Session Customer.
 - Um teste sem modelo varre os traces de exemplo atrás de padrões de CPF e e-mail.
-- O histórico da conversa nunca é reescrito depois de enviado: a máscara acontece antes do envio e no sink. Reescrever o histórico invalidaria os blocos de thinking e o cache. Exceção, decidida pelo dono em 2026-10-30: depois de uma regeneração bem-sucedida do guard de saída, a resposta inválida e a mensagem corretiva saem do histórico com `RemoveMessage`. Só o fim do turno atual muda, então o prefixo em cache até a mensagem do cliente continua válido. Os blocos de thinking assinados, porém, dependem de tudo o que veio antes deles: por isso, na mesma regeneração, as mensagens do assistente que sobram depois da corretiva perdem os blocos `thinking` e `redacted_thinking` (copiadas sem eles, com o mesmo `id`), e isso só acontece depois que a resposta regenerada passa no guard. Emenda aprovada pelo dono em 2026-10-30.
-- Os eventos `model.call` e `tool.call` vêm de um `BaseCallbackHandler` do LangChain (TTFT, duração, `usage_metadata`, erro de tool). O `input_tokens` gravado é o do LangChain, que já soma cache read e write. Os eventos do domínio são emitidos pelo próprio código.
-- O comando `pet-helper metrics <pasta>` lê os JSONL, sem chamar modelo, e imprime uma tabela por provider e modelo:
+- O histórico da conversa nunca é reescrito depois de enviado: a máscara acontece antes do envio e na exportação. Reescrever o histórico invalidaria os blocos de thinking e o cache. Exceção, decidida pelo dono em 2026-10-30: depois de uma regeneração bem-sucedida do guard de saída, a resposta inválida e a mensagem corretiva saem do histórico com `RemoveMessage`. Só o fim do turno atual muda, então o prefixo em cache até a mensagem do cliente continua válido. Os blocos de thinking assinados, porém, dependem de tudo o que veio antes deles: por isso, na mesma regeneração, as mensagens do assistente que sobram depois da corretiva perdem os blocos `thinking` e `redacted_thinking` (copiadas sem eles, com o mesmo `id`), e isso só acontece depois que a resposta regenerada passa no guard. Emenda aprovada pelo dono em 2026-10-30.
+- O `BaseCallbackHandler` do LangChain deixou de criar eventos: ele guarda o freio de custo (`BudgetExceeded`, preço desconhecido) e a cola descrita acima, e escreve nos spans do OpenLLMetry por `run_span(run_id)`. Esse acesso lê o atributo interno `spans` do handler da biblioteca (`shortcut:` no código, protegido por teste de contrato). Quando o freio relança antes de o LangChain chamar o callback de erro, o `fail_run` encerra o span. O `input_tokens` é o do LangChain, que já soma cache read e write.
+- O `uninstrument()` do OpenLLMetry 0.62.4 não remove os wrappers do LangChain e do LangGraph. Por isso `otel.install()` instrumenta uma vez e encaminha os spans ao provider da última instalação.
+- O comando `pet-helper metrics <pasta>` lê os `spans/*.jsonl`, sem chamar modelo, e imprime uma tabela por provider e modelo:
   - chamadas;
   - TTFT p50/p95;
   - TPS mediano (tokens de saída sobre o tempo depois do primeiro token);
   - tokens de entrada, saída, cache read e cache write;
-  - custo em US$, pela `genai-prices` (a versão da lib vai no relatório como fonte e data dos preços; o Ollama custa zero);
+  - custo em US$, lido de `pet_helper.cost_usd` (calculado pela `genai-prices`; a versão da lib vai no relatório como fonte e data dos preços; o Ollama custa zero);
   - taxa de acerto de cache: `cache_read / input_tokens`;
   - chamadas e taxa de erro por tool;
   - quantidade e taxa de fallback;
   - escalonamentos por motivo;
   - custo e latência por conversa, que alimentam o README.
+- Rodadas gravadas no formato JSONL antigo (um evento por linha, fora de `spans/`) não são lidas pelo `metrics` (decisão do dono, 2026-11-03).
 - O prompt cache usa dois breakpoints: um no fim do prompt de sistema estático (as tools são renderizadas antes dele, então entram junto) e um na última mensagem. O prompt de sistema fica byte a byte estável: sem data nem id. O mínimo cacheável do Haiku 5.5 é de 512 tokens, e o prefixo estático passa disso.
 - O gateway sempre consome o modelo em streaming, para medir TTFT e TPS. A CLI mostra a resposta só depois do guard de saída.
-
-Mapeamento do que o trace grava para a convenção OpenTelemetry GenAI (o tempo até o primeiro chunk era `ttft_ms`, o cache write era `cache_write` e o motivo de parada era `stop_reason`):
-
-| Evento | Chave gravada | Convenção OTel GenAI |
-|---|---|---|
-| `model.call` | `gen_ai.provider.name` | igual (o Ollama não está entre os valores conhecidos) |
-| `model.call` | `gen_ai.request.model`, `gen_ai.response.model` | igual |
-| `model.call` | `gen_ai.response.time_to_first_chunk` | igual, em segundos; nulo quando a chamada não fez streaming |
-| `model.call` | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | igual; a entrada já soma cache read e write |
-| `model.call` | `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens` | igual |
-| `model.call` | `gen_ai.response.finish_reasons` | igual, em lista |
-| `model.call` | `error.type` | igual, só quando a chamada falha |
-| `model.call` | `duration_ms`, `pet_helper.fallback`, `pet_helper.streaming`, `pet_helper.cost_usd`, `pet_helper.price_unknown` | sem equivalente |
-| `tool.call` | `gen_ai.tool.name`, `gen_ai.tool.call.arguments` | igual (a convenção chama a operação de `execute_tool`) |
-| `tool.call` | `pet_helper.status`, `error.message` | sem equivalente |
-| `retrieval` | `gen_ai.retrieval.query.text` | igual; `pet_helper.hits` é nosso |
-| `turn.start`, `turn.end` | `gen_ai.input.messages`, `gen_ai.output.messages` | igual; `pet_helper.sources` é nosso |
-| `guard.input`, `guard.output`, `escalation`, `order.refused` | `pet_helper.*` | sem equivalente |
-
-O trace não grava `gen_ai.operation.name` nem `gen_ai.conversation.id`: o nome do evento e o `session_id` já dizem o mesmo.
+- Estado em 2026-11-03: o sink JSONL antigo (`<session_id>.jsonl`, ao lado de `spans/`) segue ativo até o passo P1b do dono; depois dele, a História 3 da unidade o remove e `metrics`, a rodada e a auditoria de PII passam a ler só `spans/`. Esta seção descreve o estado depois dessa remoção.
 
 ### Motivo
 
-O desafio pede logs que expliquem por que o bot respondeu algo e aceita JSONL. Phoenix e LangSmith exigiriam um processo ou uma conta a mais para quem avalia. Mascarar num só ponto torna `dado-pessoal-mascarado` verificável por teste. A allowlist e o CPF fora do modelo reduzem o dado pessoal na origem: o modelo não tem como repetir o que não viu. Mostrar a resposta só depois do guard troca latência percebida por correção. Em produção, o caminho seria fazer streaming por sentença já checada.
+O desafio pede logs que expliquem por que o bot respondeu algo. Spans OpenTelemetry dão um formato padrão, que um backend entende sem mapeamento nosso, e cortam o código de sink, ids e emissão que existia só para isso. O arquivo local mantém o caminho sem conta para quem avalia, e a chave da LangSmith liga um painel sem mudar o código. Mascarar num só ponto, na frente de todo exporter, torna `dado-pessoal-mascarado` verificável por teste e cobre o arquivo e a nuvem com o mesmo caminho. A allowlist e o CPF fora do modelo reduzem o dado pessoal na origem: o modelo não tem como repetir o que não viu. Mostrar a resposta só depois do guard troca latência percebida por correção. Em produção, o caminho seria fazer streaming por sentença já checada.
 
 ### Alternativas
 
-- Phoenix ou LangSmith: rejeitadas pela sugestão do dono e pelo custo de setup.
-- OpenTelemetry com OpenInference: rejeitada. Grava em arquivo sem backend, mas não mede TTFT, não conhece os eventos do domínio, gera cerca de 15 spans por turno e só deixa mascarar por API privada; o código próprio não diminuiria. É o caminho para produção: trocar o destino mexe só no módulo `trace`.
+- OpenTelemetry via OpenLLMetry (A1, escolha do dono): adotada em 2026-11-03. O dono aceitou acoplar a uma API interna de um pacote 0.x para obter TTFT, custo e dados de tool no span da biblioteca.
+- Handler próprio criando os spans (A4, decisão do crítico): vira fallback, com gatilho no [ADR 0003](adr/0003-otel-langsmith.md).
+- OpenInference: rejeitada em 2026-10-29 e mantida. Grava em arquivo sem backend, mas usa a convenção `llm.*`, não mede TTFT, não conhece os eventos do domínio, gera cerca de 15 spans por turno e só deixa mascarar por API privada.
+- `langsmith[otel]`: rejeitada. Não mede TTFT nem leva eventos de domínio, e é um segundo caminho que poderia vazar dado pessoal sem a máscara.
+- Phoenix: rejeitada pelo custo de setup (um processo a mais para quem avalia).
+- LangSmith: rejeitada em 2026-10-29 por exigir conta e guardar os dados na nuvem. Adotada em 2026-11-03 só como destino opcional, ligado pela chave: quem avalia não precisa dela.
+- Anonymizer do Client da LangSmith ou Collector com redação em vez do exporter de máscara: rejeitadas, porque cobrem só as runs do Client, ou exigem um processo a mais.
 - Tabela de preços mantida à mão: rejeitada, porque a `genai-prices` já traz o Haiku e o Sonnet 5.5, inclusive a faixa acima de 100K tokens.
 - Máscara só com regex própria: rejeitada pelo dono em favor do Presidio, padrão de mercado, apesar dos cerca de 316 MB de instalação. O Presidio não traz CPF, que segue como reconhecedor nosso.
 - Mascarar em cada chamada de log: rejeitada, porque um ponto esquecido vaza.
@@ -155,7 +145,7 @@ BM25 é a sugestão do próprio desafio para poucos documentos, e reindexar sem 
 As 4 camadas das notas do dono viram módulos dentro do MSC. Entra só o que o desafio exercita. Rate limit, filas e cache semântico ficam para a conversa sobre produção, sem código.
 
 - Controller: `cli`.
-- Service: `conversation`, `guard`, `evals`.
+- Service: `conversation`, `guard`, `evals`, `optimize`.
 - Model: `gateway`, `knowledge`, `orders`, `catalog`.
 - Transversal: `trace`.
 
@@ -163,14 +153,15 @@ Cada módulo é um módulo profundo, documentado pela interface. Os nomes intern
 
 | Module | Interface | Hides | Seams / adapters |
 |---|---|---|---|
-| `cli` | `chat`, `eval`, `metrics` commands | argument parsing, terminal I/O | none; thin |
-| `conversation` | `Assistant.turn(session_id: str, text: str) -> Reply(text, sources, escalation)` | LangGraph `StateGraph` (input guard -> agent <-> tools -> output guard), `InMemorySaver` keyed by `thread_id = session_id`, system prompt, tool registry, tool-loop iteration cap (overflow = Repeated Failure), Session Customer binding, Repeated Failure counter, Escalation state, one regeneration on output-guard failure | tool registry: adding a tool for the live change = one function + one registration; tools get identity from graph state, never from arguments; tool arguments validated against their schema, a validation error returns a tool error result |
+| `cli` | `chat`, `eval`, `metrics`, `optimize` commands | argument parsing, terminal I/O, lazy import of `optimize` with a clear message when the extra is not installed | none; thin |
+| `conversation` | `Assistant.turn(session_id: str, text: str) -> Reply(text, sources, escalation)` | LangGraph `StateGraph` (input guard -> agent <-> tools -> output guard), `InMemorySaver` keyed by `thread_id = session_id`, system prompt, tool registry, tool-loop iteration cap (overflow = Repeated Failure), Session Customer binding, Repeated Failure counter, Escalation state, one regeneration on output-guard failure; `build_assistant(system_prompt: str \| None)` takes a candidate system prompt, and without the argument the prompt is byte for byte `SYSTEM_PROMPT` | tool registry: adding a tool for the live change = one function + one registration; tools get identity from graph state, never from arguments; tool arguments validated against their schema, a validation error returns a tool error result |
 | `guard` | `inspect_input(text) -> InputVerdict(model_text, cpf, injection_suspected)`; `check_reply(text, retrieved_sources) -> OutputVerdict(invalid_skus, unretrieved_sources)`; `mask(text) -> str` | Presidio analyzer and anonymizer (regex-only `no_op` engine), own CPF recognizer, pseudonymisation, accent-insensitive injection heuristics, SKU pattern | uses `catalog.exists` |
 | `gateway` | `ModelGateway.complete(messages, tools) -> ModelResult(message, provider, model, usage, ttft_ms, fell_back, refused)` | provider selection by env, Anthropic/Ollama clients, effort/thinking settings, `cache_control` placement, per-provider sampling (none on Anthropic, temperature 0 on Ollama), retry and fallback policy, cross-provider message normalisation (text-only history to Ollama), refusal handling, `model.call` trace | adapters: `anthropic` (langchain-anthropic), `ollama` (langchain-ollama, `num_ctx` set), `fake` (scripted replies: the seam that lets the whole graph run in pytest without a model) |
 | `knowledge` | `PolicyIndex.load(dir) -> PolicyIndex`; `.search(query, k=2) -> list[PolicyHit(source, title, text, score)]` | tokenisation, accent folding, stemming, stopwords, bm25s | none |
 | `orders` | `OrderService.lookup(customer: Cpf \| None, order_number: str) -> Found(OrderView) \| NotFound \| NeedsIdentification \| Unavailable` | collapse of 404 and other-customer refusal into `NotFound` (ADR 0001), one retry on timeout, `days_since_delivery` via `Clock`, PII allowlist of `OrderView`, internal reason to trace | port `OrderApi.get(order_number, customer_cpf) -> ApiResponse(status, body)` with adapter `MockOrderApi` over `kit/orders.json` (200/404/403/503/timeout; failure by a fixed order number or `PET_HELPER_ORDER_API_FAILURE`); `Clock.today()` from `PET_HELPER_TODAY` or the system date |
 | `catalog` | `Catalog.search(text, species=None, category=None) -> list[Product(sku, name, ..., in_stock)]`; `Catalog.exists(sku) -> bool` | CSV loading, similar-name matching | none |
-| `trace` | `Tracer.event(kind, **fields)`; `summarize(paths) -> MetricsTable` | JSONL layout, LangChain callback handler for model and tool calls, masking at the sink, cost through `genai-prices` | sink writes under the run's directory (held-out runs under `evals/held_out/`) |
+| `trace` | `Tracer.event(kind, **fields)`; `summarize(paths) -> MetricsTable` | OpenTelemetry provider and the OpenLLMetry instrumentation (`trace/otel.py`), span layout and domain events on the turn's root span, LangChain callback handler (cost brake, plus TTFT, cost and tool data written on the OpenLLMetry spans), `MaskingSpanExporter` in front of every exporter, cost through `genai-prices` | exporters: the spans file under the run's directory (`spans/`; reserved-case runs under `evals/held_out/`) and LangSmith OTLP when `LANGSMITH_API_KEY` is set |
+| `optimize` | `pet-helper optimize judge <round_dir>`; `pet-helper optimize assistant <targets.json>` (offline, paid, covered by the paid-command hook, installed only with the `optimize` extra) | DSPy (BootstrapFewShot on the judge, GEPA on the assistant prompt), the dev-only case split, the accept rule for the judge (TPR and TNR no worse than the current ones), the candidate file `.ignore/assistant-prompt-candidate.txt`; `dspy` is imported only here | depends on `evals` and `conversation`, nothing depends on it; the result enters the runtime only as committed text (`CRITERION_PROMPTS` and `FEW_SHOT_EXAMPLES` in `evals/judge.py`, `SYSTEM_PROMPT` in `conversation/prompt.py`) |
 | `evals` | `run_round(selection, runs=3, judge="sync" \| "batch" \| "none", budget_usd=5) -> RoundResult`; pure check functions | Inspect AI task (YAML case loader, multi-turn solver calling `Assistant`, scorer with the pure checks and the judge), estimate and confirmation, round budget stop, `cases.csv` export | judge as a pure function over an injected client (Anthropic SDK sync and Message Batches API; Ollama client later), called by the scorer and by post-steps (batch, `--rejudge`, `--collect`, the label tool); `Assistant` reused as-is |
 
 Tools que o modelo vê: `search_policies(query)`, `get_order(order_number)` sem CPF, `search_catalog(query, species?, category?)` e `escalate_to_human(reason)`, com motivo em enum. Repeated Failure é decidido pelo backend, não pelo modelo. Um segundo CPF na mesma conversa é recusado: o Session Customer continua o primeiro, e outro cliente exige conversa nova.
@@ -186,7 +177,7 @@ O SKU do kit precisa de um padrão reconhecível (prefixo fixo) para que o guard
 
 ### Motivo
 
-Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, formato da API de pedidos, layout do trace. O `fake` do gateway é o seam que permite o TDD e o piso de 80% sem modelo, que a [fluxo-desenvolvimento.md](directives/fluxo-desenvolvimento.md) exige. Identidade no estado e allowlist no `OrderView` aplicam o [ADR 0001](adr/0001-order-access-by-cpf-and-order-number.md) por construção, não por prompt. O limite de iterações e a validação dos argumentos contêm as falhas típicas de tool calling num modelo pequeno, que a documentação do Ollama não trata. O registro de tools é o seam da alteração ao vivo.
+Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, formato da API de pedidos, destino do trace, otimizador de prompt. O `fake` do gateway é o seam que permite o TDD e o piso de 80% sem modelo, que a [fluxo-desenvolvimento.md](directives/fluxo-desenvolvimento.md) exige. Identidade no estado e allowlist no `OrderView` aplicam o [ADR 0001](adr/0001-order-access-by-cpf-and-order-number.md) por construção, não por prompt. O limite de iterações e a validação dos argumentos contêm as falhas típicas de tool calling num modelo pequeno, que a documentação do Ollama não trata. O registro de tools é o seam da alteração ao vivo.
 
 ### Alternativas
 
@@ -194,6 +185,7 @@ Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, form
 - SDK da Anthropic direto no grafo: rejeitada, porque exigiria traduzir mensagens à mão para o Ollama. O SDK direto fica só no juiz, por causa do Batch.
 - Servidor HTTP para a API de pedidos: rejeitada por ora. O desafio aceita função com o mesmo contrato, e o port permite trocar depois.
 - Guard que bloqueia injection por regex: rejeitada, porque é frágil e bloqueia cliente legítimo.
+- DSPy no runtime: rejeitada em 2026-11-03, ver [ADR 0004](adr/0004-dspy-offline-optimizer.md). Um nó DSPy não compartilha tools nem estado com o grafo e traria um segundo cliente de modelo. O DSPy fica no módulo `optimize`, offline, e o resultado entra como texto commitado.
 
 `origin: owner`. Premissas: `pedido-so-do-dono`, `nao-inventa`, `simples-e-medido`.
 
@@ -224,7 +216,7 @@ Cada módulo esconde uma decisão que pode mudar: provider, motor de busca, form
 - Modo do juiz:
   - `sync` é o padrão, usado na apresentação ao vivo e em suíte pequena.
   - `batch` serve para as rodadas que contam. O lote usa a Message Batches API direto, fora do scorer do Inspect, e o teste real dessa API é feito pelo dono no passo 1 dos passos do dono; se falhar, o juiz fica só síncrono. O runner envia o lote depois das conversas e espera o resultado. Se o lote não terminar no prazo de espera, salva o id em `round.json`, e `pet-helper eval --collect <rodada>` termina a rodada depois.
-  - `none` roda só as conversas, sem juiz. A baseline o usa, porque o prompt do juiz ainda não está congelado; os casos com critério do juiz ficam `judge_pending` até o re-julgamento.
+  - `none` roda só as conversas, sem juiz. A baseline o usa, porque o prompt do juiz ainda não está congelado; os casos com critério do juiz ficam `judge_pending` até o re-julgamento. Na unidade `market-tools-adoption` (2026-11-03), as três rodadas de comparação (a baseline P1a, a paridade P1b e a aceitação do prompt do assistente P4) rodam com `--judge none`. Misturar modos criaria regressões `judge:*` falsas, porque um `fail` ou `unable` do juiz sobrepõe um `pass` determinístico, e um juiz sem validação não decide aceitação. A paridade e o aceite do assistente decidem só pelos checks determinísticos; tom, julgamento de escalonamento e acerto do "não sei" ficam pendentes, e o relatório declara juiz `none`, sem hash de juiz.
   - `--rejudge <rodada>` aplica o juiz congelado às transcrições salvas de uma rodada e grava o `judge.jsonl`, com estimativa, confirmação e teto de US$ 5 próprios.
 - Resultados, versionados no repositório (entregável 4), em `evals/results/<round_id>/`:
   - `round.json`: SHA do git, modelos, hash do prompt do assistente e do juiz, relógio, custo total.
@@ -253,7 +245,7 @@ Pass^3, a parada por custo no meio da rodada, a confirmação antes de rodar e o
 - Runner próprio inteiro: rejeitada na revisão de 29/10/2026, porque refaz épocas, logs e visualizador que o Inspect entrega.
 - promptfoo: rejeitada. Tem casos YAML nativos e visualizador, mas traz Node, não tem `unable` nem lote no juiz e o pass^3 sai de pós-processamento.
 - Phoenix local: rejeitada. Exige o servidor de pé a cada rodada, cria um segundo destino para as conversas fora da máscara única, guarda os resultados no banco dele e o servidor é Elastic License 2.0.
-- LangSmith: rejeitada. O plano gratuito exige conta e guarda os dados na nuvem por 14 dias; o self-hosted é só Enterprise.
+- LangSmith como motor da eval: rejeitada. O plano gratuito exige conta e guarda os dados na nuvem por 14 dias, e o self-hosted é só Enterprise. A eval continua no Inspect AI, sem `evaluate()` nem datasets da LangSmith, e roda sem conta. Em 2026-11-03 a LangSmith foi adotada só como destino opcional dos traces, ligado por `LANGSMITH_API_KEY` ([ADR 0003](adr/0003-otel-langsmith.md)); a rejeição de 2026-10-29 vale para a eval.
 
 `origin: owner`. Premissas: `comportamento-nasce-como-eval`, `modelo-real-so-a-mao`, `simples-e-medido`.
 
