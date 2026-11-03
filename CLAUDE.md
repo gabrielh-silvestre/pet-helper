@@ -13,7 +13,7 @@ Status: no assistant code yet; the verification harness described in `docs/direc
 ## Commands
 
 ```sh
-uv sync                          # tools pinned in uv.lock, Python 3.12
+uv sync                          # tools pinned in uv.lock, Python 3.12; --extra optimize adds the DSPy optimizer
 uv run prek install              # once per clone: pre-commit, commit-msg and pre-push hooks
 uv run prek run --all-files      # every static check (what CI runs)
 uv run pytest -q --cov           # tests without model calls, 80% branch coverage floor on src/

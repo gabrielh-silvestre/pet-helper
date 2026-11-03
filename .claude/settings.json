@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/paid-command.jq\" >/dev/null 2>&1; rc=$?; [ \"$rc\" -eq 1 ] || { echo 'Paid eval commands (pet-helper eval, judge smoke, labels judge-pool) are never run by an agent; the owner runs them in their own terminal.' >&2; exit 2; }",
+            "command": "jq -e -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/paid-command.jq\" >/dev/null 2>&1; rc=$?; [ \"$rc\" -eq 1 ] || { echo 'Paid eval commands (pet-helper eval, pet-helper optimize, judge smoke, labels judge-pool) are never run by an agent; the owner runs them in their own terminal.' >&2; exit 2; }",
             "onFailure": "block"
           }
         ]

@@ -130,7 +130,7 @@ def _read_pool(labels: Path) -> list[dict[str, Any]]:
     return pool
 
 
-def _read_key(labels: Path) -> dict[str, dict[str, Any]]:
+def read_key(labels: Path) -> dict[str, dict[str, Any]]:
     return json.loads((labels / "key.json").read_text(encoding="utf-8"))
 
 
@@ -432,7 +432,7 @@ def _judge_pool(
     timeout_seconds: float,
 ) -> int:
     labels = _labels(directory)
-    key = _read_key(labels)
+    key = read_key(labels)
     items = [i for i in _read_pool(labels) if key[i["id"]]["split"] == split]
     if not items:
         raise _Refused(f"the pool has no item in the {split} split")
@@ -579,7 +579,7 @@ def _criterion_lines(
 def _tpr_tnr(directory: Path, split: str) -> None:
     labels = _labels(directory)
     floor = _floor(labels, required=split == "test")
-    key = _read_key(labels)
+    key = read_key(labels)
     slices = {item["id"]: item["slice"] for item in _read_pool(labels)}
     human = {row["id"]: row["label"] for row in _read_jsonl(labels / "human.jsonl")}
     in_split = {i: entry for i, entry in key.items() if entry["split"] == split}

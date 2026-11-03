@@ -3,6 +3,7 @@ import sys
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from pet_helper.cli import eval_command
@@ -11,11 +12,31 @@ from pet_helper.conversation import KitError, build_assistant
 from pet_helper.gateway import ModelConfigError
 from pet_helper.trace import Summary, summarize
 
+if TYPE_CHECKING:
+    from pet_helper.optimize import command as optimize_command
+
 _TECHNICAL_CAUSES = {"model_unavailable", "refusal"}
 _MODEL_UNAVAILABLE_HINT = (
     "Check PET_HELPER_PROVIDER, ANTHROPIC_API_KEY (anthropic) or OLLAMA_BASE_URL "
     "(ollama) and run the command again."
 )
+_OPTIMIZE_EXTRA_HINT = (
+    "The optimizer needs the optimize extra. Install it with: uv sync --extra optimize"
+)
+
+
+def _optimize(
+    round_dir: Path, environment: "optimize_command.OptimizeEnvironment | None"
+) -> int:
+    try:
+        # lazy: dspy only exists with the optimize extra
+        from pet_helper.optimize import command
+    except ModuleNotFoundError as exc:
+        if exc.name != "dspy":
+            raise
+        print(_OPTIMIZE_EXTRA_HINT, file=sys.stderr)
+        return 1
+    return command.run_judge(round_dir, environment or command.default_environment())
 
 
 def _chat() -> int:
@@ -102,15 +123,22 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     eval_environment: EvalEnvironment | None = None,
+    optimize_environment: "optimize_command.OptimizeEnvironment | None" = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="pet-helper")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("chat")
     commands.add_parser("metrics").add_argument("directory", type=Path)
     eval_command.add_arguments(commands.add_parser("eval"))
+    optimize = commands.add_parser("optimize").add_subparsers(
+        dest="optimize_command", required=True
+    )
+    optimize.add_parser("judge").add_argument("round_dir", type=Path)
     args = parser.parse_args(argv)
     if args.command == "metrics":
         return _metrics(args.directory)
     if args.command == "eval":
         return eval_command.run(args, eval_environment)
+    if args.command == "optimize":
+        return _optimize(args.round_dir, optimize_environment)
     return _chat()

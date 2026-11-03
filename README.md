@@ -80,6 +80,8 @@ uv sync
 PET_HELPER_TODAY=2026-11-03 uv run pet-helper chat
 ```
 
+O otimizador offline (`pet-helper optimize judge`) é opcional e exige o extra: `uv sync --extra optimize`.
+
 `PET_HELPER_TODAY` fixa a data de hoje do assistente. Sem ela, o assistente usa a data real, e os prazos dos pedidos do kit (calculados a partir de 2026-11-03, a `reference_date` de `kit/orders.json`) saem errados.
 
 Por padrão, a CLI carrega políticas, catálogo e pedidos do diretório `kit` relativo ao diretório de trabalho. Use `PET_HELPER_KIT_DIR` para apontar para outro caminho do kit.
