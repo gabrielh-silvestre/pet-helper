@@ -311,6 +311,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
             for name in _MODEL_SPAN_FIELDS
             if fields[name] is not None
         }
+        attributes[otel.SPAN_KIND_KEY] = "llm"
         if cost is not None:
             attributes["langsmith.metadata.cost_usd"] = float(cost)
         _annotate_span(run_id, attributes)
@@ -370,6 +371,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
         span_attributes = {
             "gen_ai.tool.call.arguments": _as_text(run.arguments),
             "pet_helper.status": status,
+            otel.SPAN_KIND_KEY: "tool",
         }
         if result is not None:
             span_attributes["gen_ai.tool.call.result"] = _as_text(result)

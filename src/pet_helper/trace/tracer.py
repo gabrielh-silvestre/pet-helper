@@ -25,6 +25,7 @@ from pet_helper.trace.otel import (
     MIRROR_PREFIX,
     OPAQUE_KEYS,
     SESSION_ID_KEY,
+    SPAN_KIND_KEY,
     TURN_KEY,
     MaskingSpanExporter,
     SessionRoutingExporter,
@@ -77,7 +78,7 @@ class Tracer:
         self._provider.add_span_processor(
             SimpleSpanProcessor(SessionRoutingExporter(self._directory / "spans", mask))
         )
-        for exporter in span_exporters:
+        for exporter in (*span_exporters, *otel.langsmith_exporters()):
             self._provider.add_span_processor(
                 BatchSpanProcessor(MaskingSpanExporter(exporter, mask))
             )
@@ -125,6 +126,7 @@ class _TurnScope:
     session_id: str
     turn: int
     span: Span | None
+    mask: Callable[[str], str]
 
 
 _CURRENT_TURN: ContextVar[_TurnScope | None] = ContextVar("current_turn", default=None)
@@ -135,14 +137,22 @@ def turn_scope(tracer: TracerPort, session_id: str, turn: int):
     # a TracerPort that is not a Tracer has no span pipeline behind it
     root = (
         tracer.span_tracer.start_as_current_span(
-            "turn", attributes={SESSION_ID_KEY: session_id, TURN_KEY: turn}
+            "turn",
+            attributes={
+                SESSION_ID_KEY: session_id,
+                TURN_KEY: turn,
+                SPAN_KIND_KEY: "chain",
+                f"{MIRROR_PREFIX}{SESSION_ID_KEY}": session_id,
+                f"{MIRROR_PREFIX}{TURN_KEY}": turn,
+            },
         )
         if isinstance(tracer, Tracer)
         else nullcontext(None)
     )
     # LangSmith's own tracer would send the unmasked runs: the masked spans are the only trace
     with langsmith.tracing_context(enabled=False), root as span:
-        token = _CURRENT_TURN.set(_TurnScope(tracer, session_id, turn, span))
+        mask = tracer._mask if isinstance(tracer, Tracer) else str
+        token = _CURRENT_TURN.set(_TurnScope(tracer, session_id, turn, span, mask))
         try:
             yield
         finally:
@@ -155,13 +165,15 @@ def _attribute_value(value: Any) -> Any:
     return json.dumps(value, default=str, ensure_ascii=False)
 
 
-def _record_on_span(span: Span, kind: str, fields: dict[str, Any]) -> None:
+def _record_on_span(
+    span: Span, kind: str, fields: dict[str, Any], mask: Callable[[str], str]
+) -> None:
     if kind in _SPAN_KINDS:
         return
     if kind in _ROOT_MESSAGE_ROLES:
         key, role = _ROOT_MESSAGE_ROLES[kind]
         message = json.dumps(
-            [{"role": role, "content": fields[key]}], ensure_ascii=False
+            [{"role": role, "content": mask(fields[key])}], ensure_ascii=False
         )
         span.set_attributes(
             {name: _attribute_value(v) for name, v in {**fields, key: message}.items()}
@@ -183,4 +195,4 @@ def emit(kind: str, **fields: Any) -> None:
         return
     scope.tracer.event(kind, session_id=scope.session_id, turn=scope.turn, **fields)
     if scope.span is not None:
-        _record_on_span(scope.span, kind, fields)
+        _record_on_span(scope.span, kind, fields, scope.mask)

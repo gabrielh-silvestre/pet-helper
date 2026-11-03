@@ -10,6 +10,7 @@ from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackManager
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.langchain import LangchainInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
     TraceloopCallbackHandler,
@@ -35,6 +36,9 @@ TURN_KEY = "turn"
 
 _OPENLLMETRY_CONTENT_ENV = "TRACELOOP_TRACE_CONTENT"
 MIRROR_PREFIX = "langsmith.metadata."
+SPAN_KIND_KEY = "langsmith.span.kind"
+_LANGSMITH_ENDPOINT = "https://api.smith.langchain.com/otel/v1/traces"
+_LANGSMITH_DEFAULT_PROJECT = "pet-helper"
 
 FREE_TEXT_FIELDS = frozenset(
     {
@@ -57,7 +61,7 @@ OPAQUE_KEYS = frozenset(
         "gen_ai.tool.name",
         "error.type",
         SESSION_ID_KEY,
-        "langsmith.span.kind",
+        SPAN_KIND_KEY,
         f"{MIRROR_PREFIX}{SESSION_ID_KEY}",
     }
 )
@@ -66,6 +70,21 @@ logger = logging.getLogger(__name__)
 
 _active: trace.Tracer | None = None
 _handler: TraceloopCallbackHandler | None = None
+
+
+def langsmith_exporters() -> list[SpanExporter]:
+    """The OTLP exporter for LangSmith when LANGSMITH_API_KEY is set, none otherwise."""
+    api_key = os.environ.get("LANGSMITH_API_KEY")
+    if not api_key:
+        return []
+    project = os.environ.get("LANGSMITH_PROJECT", _LANGSMITH_DEFAULT_PROJECT)
+    return [
+        OTLPSpanExporter(
+            endpoint=_LANGSMITH_ENDPOINT,
+            timeout=10,
+            headers={"x-api-key": api_key, "Langsmith-Project": project},
+        )
+    ]
 
 
 def map_strings(value: Any, transform: Callable[[str], str]) -> Any:
