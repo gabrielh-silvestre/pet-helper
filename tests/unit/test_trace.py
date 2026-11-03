@@ -435,3 +435,7 @@ def test_it_should_return_no_cost_for_an_unknown_model_outside_strict_mode():
     cost = cost_usd("anthropic", "claude-never-released-9", usage)
 
     assert cost is None
+
+
+def test_it_should_do_nothing_when_a_null_tracer_shuts_down():
+    assert NullTracer().shutdown() is None

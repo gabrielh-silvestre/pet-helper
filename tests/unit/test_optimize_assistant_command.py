@@ -414,7 +414,7 @@ def test_it_should_exit_non_zero_when_the_rollouts_reach_the_cap(
     assert code != 0
 
 
-def test_it_should_write_no_candidate_when_the_rollouts_reach_the_cap(
+def test_it_should_write_no_candidate_when_the_cap_stops_a_run_that_found_nothing_better(
     monkeypatch, targets, cases_dir, candidate_path
 ):
     budget = RoundBudget(Decimal(5))
@@ -470,7 +470,7 @@ def test_it_should_stop_calling_the_reflection_model_once_its_cost_passes_the_ca
     assert 1 <= lm.calls <= 2
 
 
-def test_it_should_exit_non_zero_and_write_no_candidate_when_the_reflection_passes_the_cap(
+def test_it_should_exit_non_zero_and_write_no_candidate_when_the_reflection_passes_the_cap_with_nothing_better(
     monkeypatch, capsys, targets, cases_dir, candidate_path, runner
 ):
     code = optimize_assistant(
@@ -486,3 +486,80 @@ def test_it_should_exit_non_zero_and_write_no_candidate_when_the_reflection_pass
     assert code != 0
     assert not candidate_path.exists()
     assert "spent US$" in capsys.readouterr().err
+
+
+# a cap that stops a run which already found a better prompt
+
+# GEPA scores the proposal on a minibatch of 3 and then on the 10 validation cases
+GOOD_CALLS_TO_VALIDATE = 3 + 10
+
+
+class _CapAfterImprovementRunner(ChargingRunner):
+    """Charges the whole cap on the rollout that finishes validating the improved prompt."""
+
+    def __call__(self, case, system_prompt):
+        record = super().__call__(case, system_prompt)
+        good_calls = sum(GOOD_PROMPT in prompt for _, prompt in self.calls)
+        if good_calls == GOOD_CALLS_TO_VALIDATE and GOOD_PROMPT in system_prompt:
+            self.budget.on_cost(self.budget.cap)
+        return record
+
+
+def _stopped_by_the_cap_after_an_improvement(
+    monkeypatch, targets, cases_dir, candidate_path
+) -> int:
+    budget = RoundBudget(Decimal(5))
+    runner = _CapAfterImprovementRunner(
+        budget, Decimal("0.001"), reserve=Decimal("0.001")
+    )
+    return optimize_assistant(
+        monkeypatch,
+        targets,
+        cases_dir=cases_dir,
+        candidate_path=candidate_path,
+        runner=runner,
+        max_metric_calls=RUNTIME_CALLS,
+        budget=budget,
+    )
+
+
+def _partial_candidates(directory) -> list:
+    return [
+        path
+        for path in directory.rglob("*")
+        if path.is_file()
+        and GOOD_PROMPT in (text := path.read_text(encoding="utf-8", errors="ignore"))
+        and "partial" in text.lower()
+    ]
+
+
+def test_it_should_exit_non_zero_when_the_cap_stops_a_run_that_found_a_better_prompt(
+    monkeypatch, targets, cases_dir, candidate_path
+):
+    code = _stopped_by_the_cap_after_an_improvement(
+        monkeypatch, targets, cases_dir, candidate_path
+    )
+
+    assert code != 0
+
+
+def test_it_should_write_the_best_prompt_so_far_marked_partial_when_the_cap_stops_the_run(
+    monkeypatch, targets, cases_dir, candidate_path
+):
+    _stopped_by_the_cap_after_an_improvement(
+        monkeypatch, targets, cases_dir, candidate_path
+    )
+
+    assert _partial_candidates(candidate_path.parent) != []
+
+
+def test_it_should_warn_on_stderr_that_the_written_prompt_is_partial_when_the_cap_stops_the_run(
+    monkeypatch, capsys, targets, cases_dir, candidate_path
+):
+    _stopped_by_the_cap_after_an_improvement(
+        monkeypatch, targets, cases_dir, candidate_path
+    )
+
+    stderr = capsys.readouterr().err.lower()
+    assert "partial" in stderr
+    assert "cap" in stderr

@@ -10,7 +10,7 @@ from pet_helper.cli import eval_command
 from pet_helper.cli.eval_command import EvalEnvironment
 from pet_helper.conversation import KitError, build_assistant
 from pet_helper.gateway import ModelConfigError
-from pet_helper.trace import Summary, summarize
+from pet_helper.trace import Summary, otel, summarize
 
 if TYPE_CHECKING:
     from pet_helper.optimize import command as optimize_command
@@ -88,6 +88,8 @@ def _converse() -> int:
                 print()
                 return 130
     finally:
+        if otel.langsmith_active():
+            print("flushing traces to LangSmith (Ctrl-C to skip)", file=sys.stderr)
         assistant.close()
 
 

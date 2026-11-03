@@ -14,6 +14,7 @@ from opentelemetry.sdk.trace.export import (
 )
 
 from pet_helper.conversation import build_assistant
+from pet_helper.gateway import FakeGateway
 from pet_helper.trace import Tracer, otel
 from tests.unit.otel_fixtures import (
     KIT_DIR,
@@ -31,6 +32,7 @@ from tests.unit.otel_fixtures import (
     tool_spans,
 )
 from tests.unit.otel_support import ScriptedGateway, tool_call
+from tests.unit.test_cli import _run_chat
 from tests.unit.test_eval_round import play
 from tests.unit.test_eval_task import (
     Gateways,
@@ -400,3 +402,108 @@ def test_it_should_send_nothing_from_a_round_without_the_key(results_root, otlp)
     play(results_root, [make_case()], Gateways(), runs=1)
 
     assert (otlp.built, otlp.spans) == ([], [])
+
+
+# the endpoint: the LangSmith cloud by default, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT when set
+
+TRACES_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+CUSTOM_ENDPOINT = "https://collector.example.com:4318/custom/traces"
+
+
+@pytest.mark.usefixtures("api_key")
+def test_it_should_send_to_the_traces_endpoint_variable_exactly_as_written(
+    tmp_path, otlp, monkeypatch
+):
+    monkeypatch.setenv(TRACES_ENDPOINT_ENV, CUSTOM_ENDPOINT)
+
+    _chat_turn(tmp_path)
+
+    assert [call["endpoint"] for call in otlp.built] == [CUSTOM_ENDPOINT]
+
+
+@pytest.mark.usefixtures("api_key")
+def test_it_should_keep_the_api_key_header_when_the_traces_endpoint_variable_is_set(
+    tmp_path, otlp, monkeypatch
+):
+    monkeypatch.setenv(TRACES_ENDPOINT_ENV, CUSTOM_ENDPOINT)
+
+    _chat_turn(tmp_path)
+
+    assert [call["headers"]["x-api-key"] for call in otlp.built] == [API_KEY]
+
+
+@pytest.mark.usefixtures("api_key")
+def test_it_should_mask_the_pii_sent_to_the_traces_endpoint_variable(
+    tmp_path, otlp, monkeypatch
+):
+    monkeypatch.setenv(TRACES_ENDPOINT_ENV, CUSTOM_ENDPOINT)
+
+    _chat_turn(tmp_path, text=f"Oi, {PII_TEXT}")
+
+    sent = "\n".join(text for span in otlp.spans for text in all_strings(span))
+    assert (sent != "", [pii for pii in RAW_PII if pii in sent]) == (True, [])
+
+
+@pytest.mark.usefixtures("api_key")
+def test_it_should_ignore_langsmith_endpoint_and_keep_the_default_endpoint(
+    tmp_path, otlp, monkeypatch
+):
+    monkeypatch.setenv("LANGSMITH_ENDPOINT", "https://eu.api.smith.langchain.com")
+
+    _chat_turn(tmp_path)
+
+    assert [call["endpoint"] for call in otlp.built] == [ENDPOINT]
+
+
+# the chat tells the user it is flushing before it closes
+
+FLUSH_NOTICE = "flushing traces to LangSmith (Ctrl-C to skip)"
+
+
+@pytest.fixture
+def chat_session(monkeypatch, tmp_path, _otel_clean):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PET_HELPER_KIT_DIR", str(KIT_DIR))
+
+
+def _stderr_seen_at_shutdown(monkeypatch, capsys) -> list[str]:
+    seen: list[str] = []
+    original = Tracer.shutdown
+
+    def spy(self):
+        seen.append(capsys.readouterr().err)
+        original(self)
+
+    monkeypatch.setattr(Tracer, "shutdown", spy)
+    return seen
+
+
+@pytest.mark.usefixtures("api_key", "chat_session")
+def test_it_should_print_one_flushing_line_on_stderr_before_closing_the_chat(
+    monkeypatch, capsys, otlp
+):
+    seen = _stderr_seen_at_shutdown(monkeypatch, capsys)
+
+    _run_chat(monkeypatch, [], FakeGateway([]))
+
+    assert seen == [f"{FLUSH_NOTICE}\n"]
+
+
+@pytest.mark.usefixtures("api_key", "chat_session")
+def test_it_should_print_nothing_else_on_stderr_after_the_flushing_line(
+    monkeypatch, capsys, otlp
+):
+    _stderr_seen_at_shutdown(monkeypatch, capsys)
+
+    _run_chat(monkeypatch, [], FakeGateway([]))
+
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.usefixtures("chat_session")
+def test_it_should_print_nothing_on_stderr_when_the_chat_closes_without_a_key(
+    monkeypatch, capsys, otlp
+):
+    _run_chat(monkeypatch, [], FakeGateway([]))
+
+    assert capsys.readouterr().err == ""

@@ -38,6 +38,7 @@ _OPENLLMETRY_CONTENT_ENV = "TRACELOOP_TRACE_CONTENT"
 MIRROR_PREFIX = "langsmith.metadata."
 SPAN_KIND_KEY = "langsmith.span.kind"
 _LANGSMITH_ENDPOINT = "https://api.smith.langchain.com/otel/v1/traces"
+_TRACES_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
 _LANGSMITH_DEFAULT_PROJECT = "pet-helper"
 
 FREE_TEXT_FIELDS = frozenset(
@@ -72,6 +73,10 @@ _active: trace.Tracer | None = None
 _handler: TraceloopCallbackHandler | None = None
 
 
+def langsmith_active() -> bool:
+    return bool(os.environ.get("LANGSMITH_API_KEY"))
+
+
 def langsmith_exporters() -> list[SpanExporter]:
     """The OTLP exporter for LangSmith when LANGSMITH_API_KEY is set, none otherwise."""
     api_key = os.environ.get("LANGSMITH_API_KEY")
@@ -80,7 +85,7 @@ def langsmith_exporters() -> list[SpanExporter]:
     project = os.environ.get("LANGSMITH_PROJECT", _LANGSMITH_DEFAULT_PROJECT)
     return [
         OTLPSpanExporter(
-            endpoint=_LANGSMITH_ENDPOINT,
+            endpoint=os.environ.get(_TRACES_ENDPOINT_ENV) or _LANGSMITH_ENDPOINT,
             timeout=10,
             headers={"x-api-key": api_key, "Langsmith-Project": project},
         )

@@ -35,7 +35,7 @@ pytest.importorskip("dspy")
 from langchain_core.messages import SystemMessage
 
 from pet_helper.conversation import Reply
-from pet_helper.evals.budget import RoundBudget
+from pet_helper.evals.budget import JUDGE_CALL_RESERVE_USD, RoundBudget
 from pet_helper.evals.cases import Check
 from pet_helper.evals.checks import RunRecord, ToolCall
 from pet_helper.gateway import FakeGateway
@@ -53,6 +53,7 @@ from pet_helper.optimize.assistant import (
 from pet_helper.trace import BudgetExceeded
 from tests.unit.optimize_support import (
     GOOD_PROMPT,
+    ChargingRunner,
     PromptSensitiveRunner,
     make_cases,
     reflection_lm,
@@ -398,3 +399,42 @@ def test_it_should_estimate_a_positive_cost():
 
 def test_it_should_estimate_more_for_more_metric_calls():
     assert estimate_usd(300) > estimate_usd(30)
+
+
+# the cap and the natural end of a run
+
+NATURAL_END_CALLS = 12
+LATE_ROLLOUT_COST = Decimal("0.03")
+
+
+class _LateSpendRunner(ChargingRunner):
+    """Spends little until the metric-call budget is used up, then a lot on each later rollout.
+
+    The spend only reaches the last reserve of the cap after the run used all its metric calls, so no stop
+    check can see it while GEPA is still working.
+    """
+
+    def __call__(self, case, system_prompt):
+        record = super().__call__(case, system_prompt)
+        if len(self.calls) >= NATURAL_END_CALLS:
+            self.budget.on_cost(LATE_ROLLOUT_COST)
+        return record
+
+
+def test_it_should_return_the_candidate_when_a_run_that_used_all_its_metric_calls_ends_near_the_cap():
+    budget = RoundBudget(Decimal("0.12"))
+    runner = _LateSpendRunner(budget, Decimal("0.001"), reserve=Decimal("0.001"))
+    cases = make_cases(8)
+
+    candidate = optimize_prompt(
+        "Prompt de partida",
+        cases[:4],
+        cases[4:],
+        runner=runner,
+        reflection_lm=reflection_lm(),
+        max_metric_calls=NATURAL_END_CALLS,
+        budget=budget,
+    )
+
+    assert candidate == GOOD_PROMPT
+    assert budget.cap - JUDGE_CALL_RESERVE_USD < budget.spent < budget.cap

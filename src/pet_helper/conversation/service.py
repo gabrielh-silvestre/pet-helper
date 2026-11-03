@@ -81,8 +81,7 @@ class Assistant:
         return state.values.get("escalation_cause")
 
     def close(self) -> None:
-        if isinstance(self._tracer, Tracer):
-            self._tracer.shutdown()
+        self._tracer.shutdown()
 
     def turn(self, session_id: str, text: str) -> Reply:
         turn_number = self._turns.get(session_id, 0) + 1

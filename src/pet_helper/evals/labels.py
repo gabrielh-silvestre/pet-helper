@@ -419,6 +419,16 @@ def _judge_batch(
     return verdicts, cost, stop
 
 
+def estimate_judge_calls(count: int, mode: str = "sync") -> tuple[Decimal, Decimal]:
+    """The typical and the worst-case cost of judging `count` items."""
+    if mode == "sync":
+        return JUDGE_CALL_ESTIMATE_USD * count, JUDGE_CALL_RESERVE_USD * count
+    return (
+        JUDGE_CALL_ESTIMATE_USD * count * BATCH_PRICE_FACTOR,
+        batch_reserve_usd(count, JUDGE_MAX_TOKENS),
+    )
+
+
 def _judge_pool(
     directory: Path,
     split: str,
@@ -445,11 +455,7 @@ def _judge_pool(
         raise _Refused(f"{API_KEY_ENV} is required for the paid judge calls")
 
     count = len(items)
-    if mode == "sync":
-        typical, worst = JUDGE_CALL_ESTIMATE_USD * count, JUDGE_CALL_RESERVE_USD * count
-    else:
-        typical = JUDGE_CALL_ESTIMATE_USD * count * BATCH_PRICE_FACTOR
-        worst = batch_reserve_usd(count, JUDGE_MAX_TOKENS)
+    typical, worst = estimate_judge_calls(count, mode)
     print(
         f"Estimate for {count} items ({mode}): US$ {typical:.4f} typical, "
         f"US$ {worst:.4f} worst case, cap US$ {cap_usd}"

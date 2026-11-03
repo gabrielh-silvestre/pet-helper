@@ -1,9 +1,12 @@
 """The turn root span, the domain events on it and the model span fed by the handler."""
 
+import json
+
 import pytest
 
 from pet_helper.conversation import build_assistant
 from pet_helper.gateway import FakeGateway
+from pet_helper.trace import Tracer
 from tests.unit.otel_fixtures import (
     KIT_DIR,
     PII_TEXT,
@@ -17,9 +20,11 @@ from tests.unit.otel_fixtures import (
     event_names,
     file_lines,
     finish,
+    mask,
     model_spans,
     roots,
     run_turns,
+    span_file,
     traced,
 )
 from tests.unit.otel_support import ScriptedGateway, tool_call
@@ -325,3 +330,37 @@ def test_it_should_leave_no_raw_pii_in_any_span_of_a_turn(tmp_path):
 
     written = "\n".join(text for span in spans for text in all_strings(span))
     assert [pii for pii in RAW_PII if pii in written] == []
+
+
+# the turn messages on the root span
+
+PLANTED_WORD = "SEGREDO"
+
+
+def _root_line(tmp_path, text: str, *, masking=None) -> dict:
+    tracer = Tracer(tmp_path, mask=masking or mask())
+    assistant = build_assistant(
+        gateway=ScriptedGateway(["Olá!"]), tracer=tracer, kit_dir=KIT_DIR
+    )
+    assistant.turn(SESSION_ID, text)
+    tracer.shutdown()
+    return next(
+        line for line in file_lines(span_file(tmp_path)) if line["parent_id"] is None
+    )
+
+
+def test_it_should_not_leave_raw_pii_in_the_input_message_of_the_span_file(tmp_path):
+    root = _root_line(tmp_path, f"Oi, {PII_TEXT}")
+
+    message = root["attributes"]["gen_ai.input.messages"]
+    assert [pii for pii in RAW_PII if pii in message] == []
+
+
+def test_it_should_mask_the_input_message_of_the_span_file_once(tmp_path):
+    def mark(text: str) -> str:
+        return text.replace(PLANTED_WORD, f"[{PLANTED_WORD}-MASKED]")
+
+    root = _root_line(tmp_path, f"meu código {PLANTED_WORD} aqui", masking=mark)
+
+    (message,) = json.loads(root["attributes"]["gen_ai.input.messages"])
+    assert message["content"] == f"meu código [{PLANTED_WORD}-MASKED] aqui"

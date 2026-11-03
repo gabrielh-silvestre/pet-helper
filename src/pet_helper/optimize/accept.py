@@ -1,5 +1,5 @@
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pet_helper.evals import stats
@@ -19,6 +19,8 @@ class Rate:
 class CriterionRates:
     tpr: Rate
     tnr: Rate
+    # coverage lost to `unable` is reported, but two judges that differ only there are equal
+    unable: int = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,8 @@ def rates_from_pairs(pairs: Sequence[tuple[str, str]]) -> CriterionRates:
         verdicts = [verdict for human, verdict in judged if human == label]
         return Rate(verdicts.count(label), len(verdicts))
 
-    return CriterionRates(tpr=rate("pass"), tnr=rate("fail"))
+    unable = len(pairs) - len(judged)
+    return CriterionRates(tpr=rate("pass"), tnr=rate("fail"), unable=unable)
 
 
 def compare(current: CriterionRates, candidate: CriterionRates) -> Decision:
@@ -83,6 +86,7 @@ def format_report(
                 interval = "undefined"
             sides.append(f"{side} {rate.hits}/{rate.total} wilson95 {interval}")
         lines.append(f"  {name} {' '.join(sides)}")
+    lines.append(f"  unable current {current.unable} candidate {candidate.unable}")
     return "\n".join(lines)
 
 

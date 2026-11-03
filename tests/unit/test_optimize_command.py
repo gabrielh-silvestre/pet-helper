@@ -26,24 +26,36 @@ Assumed public surface:
   read or required (waived by the owner, 2026-11-03); (d) the candidate stays in `judge_path` only when no
   criterion is `worse` and at least one is accepted; otherwise the original bytes are restored. They are
   restored too when the second confirmation is declined or the test run returns non-zero.
+- Review fixes (2026-11-03): `labels/key.json` is restored byte for byte whenever the candidate does not
+  stay; the command refuses before any spend when a test item of `key.json` carries another judge hash
+  than the current one, and when `judge-runs.jsonl` already holds a forced test read (one candidate per
+  unit); before the second `Run? [y/N] ` it prints the estimate of the test read (`<n> items`, the
+  typical and the worst case as `labels.estimate_judge_calls(n)` gives them, 4 decimals) and refuses with
+  a message that says `cap` when the worst case passes `cap_usd`; a candidate whose bytes equal the
+  current judge ends the command before the second confirmation; a `BudgetExceeded` or `dspy` error while
+  choosing the candidate is one message on stderr and a non-zero return, the judge restored.
 - Without the `optimize` extra (`import dspy` fails) the command prints one clear message on stderr that
   names the install command `uv sync --extra optimize`, prints nothing on stdout and returns non-zero.
   The `optimize` modules are imported lazily, only by this command, so `pet-helper chat` and `eval` still load.
 """
 
 import json
+import subprocess
 import sys
 from decimal import Decimal
 
 import pytest
 
 from pet_helper.cli import main
+from pet_helper.evals import judge as judge_module
+from pet_helper.evals import labels as labels_module
 from tests.unit.optimize_support import (
     TEST_MARKER,
     FakeValidation,
     build_labelled_round,
     copy_judge_source,
     load_judge_copy,
+    record_test_run,
 )
 from tests.unit.test_cli import _set_input_lines
 
@@ -478,3 +490,249 @@ def test_it_should_report_counts_and_wilson_for_each_criterion(
     out = capsys.readouterr().out
     assert all(c in out for c in ("tone", "escalation_judgment", "dont_know_accuracy"))
     assert "wilson95" in out
+
+
+# the key.json of the round after a candidate
+
+
+def _key_bytes(labelled) -> bytes:
+    return (labelled.directory / "labels" / "key.json").read_bytes()
+
+
+def test_it_should_restore_key_json_when_the_candidate_is_rejected(
+    monkeypatch, labelled, lm, judge_path
+):
+    worse = FakeValidation(labelled, judge_path, mistakes=("esc-test-0",))
+    before = _key_bytes(labelled)
+
+    optimize_judge(monkeypatch, labelled.directory, lm, judge_path, validation=worse)
+
+    assert _key_bytes(labelled) == before
+
+
+def test_it_should_restore_key_json_when_the_test_run_fails_after_a_partial_write(
+    monkeypatch, labelled, lm, judge_path
+):
+    def partial_then_fail(round_dir, *, force_new_validation):
+        first = next(iter(labelled.test_labels))
+        record_test_run(round_dir, {first: "fail"}, "candidate", forced=True)
+        return 1
+
+    before = _key_bytes(labelled)
+
+    optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=partial_then_fail
+    )
+
+    assert _key_bytes(labelled) == before
+
+
+def test_it_should_restore_key_json_when_the_candidate_answers_unable_everywhere(
+    monkeypatch, labelled, lm, judge_path
+):
+    unable = FakeValidation(labelled, judge_path, unable=True)
+    before = _key_bytes(labelled)
+
+    optimize_judge(monkeypatch, labelled.directory, lm, judge_path, validation=unable)
+
+    assert _key_bytes(labelled) == before
+
+
+def test_it_should_keep_the_candidate_verdicts_in_key_json_when_it_is_accepted(
+    monkeypatch, labelled, lm, judge_path, validation
+):
+    optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    key = json.loads(_key_bytes(labelled))
+    assert {key[i]["judge_prompt_sha256"] for i in labelled.test_labels} == {
+        "candidate"
+    }
+
+
+def test_it_should_compare_a_second_equally_worse_candidate_with_the_real_baseline(
+    monkeypatch, capsys, labelled, lm, judge_path
+):
+    worse = FakeValidation(labelled, judge_path, mistakes=("esc-test-0",))
+    optimize_judge(monkeypatch, labelled.directory, lm, judge_path, validation=worse)
+    capsys.readouterr()
+    # the forced-read refusal would stop a second run: keep only the baseline line to reach the comparison
+    runs = labelled.directory / "labels" / "judge-runs.jsonl"
+    runs.write_text(runs.read_text(encoding="utf-8").splitlines()[0] + "\n")
+
+    optimize_judge(monkeypatch, labelled.directory, lm, judge_path, validation=worse)
+
+    out = capsys.readouterr().out
+    assert "TPR current 2/2" in out
+    assert "reject" in out
+
+
+def test_it_should_refuse_before_spending_when_a_test_item_was_judged_by_another_judge(
+    monkeypatch, labelled, lm, judge_path, validation
+):
+    key = json.loads(_key_bytes(labelled))
+    for item_id in labelled.test_labels:
+        key[item_id]["judge_prompt_sha256"] = "another-judge"
+    (labelled.directory / "labels" / "key.json").write_text(json.dumps(key))
+
+    code = optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    assert code != 0
+    assert (lm.history, validation.calls) == ([], [])
+
+
+def test_it_should_refuse_before_spending_when_a_candidate_already_read_the_test_split(
+    monkeypatch, labelled, lm, judge_path, validation
+):
+    record_test_run(
+        labelled.directory,
+        dict(labelled.test_labels),
+        judge_module.judge_prompt_sha256(),
+        forced=True,
+    )
+
+    code = optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    assert code != 0
+    assert (lm.history, validation.calls) == ([], [])
+
+
+# the estimate of the test-split read
+
+
+def _price_the_test_read(monkeypatch) -> tuple[str, str]:
+    monkeypatch.setattr(labels_module, "JUDGE_CALL_RESERVE_USD", Decimal("0.1"))
+    count = 8
+    typical = labels_module.JUDGE_CALL_ESTIMATE_USD * count
+    return f"{typical:.4f}", f"{Decimal('0.1') * count:.4f}"
+
+
+def test_it_should_print_the_test_split_estimate_before_the_second_confirmation(
+    monkeypatch, capsys, labelled, lm, judge_path, validation
+):
+    typical, worst = _price_the_test_read(monkeypatch)
+
+    optimize_judge(
+        monkeypatch,
+        labelled.directory,
+        lm,
+        judge_path,
+        validation=validation,
+        answers=("y", "n"),
+    )
+
+    out = capsys.readouterr().out
+    assert f"{len(labelled.test_labels)} items" in out
+    assert typical in out
+    assert worst in out
+
+
+def test_it_should_refuse_a_test_read_whose_worst_case_passes_the_cap(
+    monkeypatch, capsys, labelled, lm, judge_path, validation
+):
+    monkeypatch.setattr(labels_module, "JUDGE_CALL_RESERVE_USD", Decimal(1))
+
+    code = optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    assert code != 0
+    assert "cap" in capsys.readouterr().err
+    assert validation.calls == []
+
+
+def test_it_should_pass_the_force_flag_to_the_judge_pool_process(
+    monkeypatch, labelled, lm, judge_path
+):
+    from pet_helper.optimize import command
+
+    commands: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        commands.append(argv)
+        return subprocess.CompletedProcess(argv, 1)
+
+    monkeypatch.setattr(command.subprocess, "run", fake_run)
+
+    optimize_judge(monkeypatch, labelled.directory, lm, judge_path)
+
+    assert any("--force-new-validation" in argv for argv in commands)
+
+
+# a candidate that changes nothing
+
+
+def test_it_should_not_read_the_test_split_when_the_candidate_equals_the_current_judge(
+    monkeypatch, labelled, lm, judge_path, validation
+):
+    from pet_helper.optimize import command
+
+    monkeypatch.setattr(command, "select_examples", lambda *args, **kwargs: [])
+
+    optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    assert validation.calls == []
+
+
+# a failure while choosing the candidate
+
+
+def _failure(kind: str) -> Exception:
+    from dspy.utils.exceptions import DSPyError
+
+    from pet_helper.trace import BudgetExceeded
+
+    return {
+        "budget": BudgetExceeded("The cap of US$ 5 stopped the bootstrap"),
+        "dspy": DSPyError("the adapter could not parse the answer"),
+    }[kind]
+
+
+@pytest.mark.parametrize("kind", ["budget", "dspy"])
+def test_it_should_report_a_failure_while_choosing_the_candidate_on_stderr(
+    monkeypatch, capsys, labelled, lm, judge_path, validation, kind
+):
+    from pet_helper.optimize import command
+
+    failure = _failure(kind)
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(command, "select_examples", fail)
+
+    code = optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    assert code != 0
+    assert str(failure) in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["budget", "dspy"])
+def test_it_should_restore_the_judge_file_after_a_failure_while_choosing_the_candidate(
+    monkeypatch, labelled, lm, judge_path, validation, kind
+):
+    from pet_helper.optimize import command
+
+    failure = _failure(kind)
+    before = judge_path.read_bytes()
+
+    def write_then_fail(examples, path):
+        path.write_text("# half-written candidate\n", encoding="utf-8")
+        raise failure
+
+    monkeypatch.setattr(command, "materialize_few_shots", write_then_fail)
+
+    optimize_judge(
+        monkeypatch, labelled.directory, lm, judge_path, validation=validation
+    )
+
+    assert judge_path.read_bytes() == before

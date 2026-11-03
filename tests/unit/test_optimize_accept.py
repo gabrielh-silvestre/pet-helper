@@ -18,6 +18,8 @@ Assumed public surface of `pet_helper.optimize.accept`:
   the outcome as one of the words `accept`, `reject` or `keep` (the current prompt stays).
 """
 
+import re
+
 import pytest
 
 from pet_helper.evals.stats import wilson_interval
@@ -180,3 +182,16 @@ def test_it_should_state_the_outcome_in_the_report(current, candidate, word):
     report = format_report("dont_know_accuracy", current, candidate, decision)
 
     assert word in report.lower()
+
+
+def test_it_should_report_how_many_verdicts_were_unable_on_each_side():
+    current = rates_from_pairs([("pass", "pass"), ("fail", "fail")])
+    candidate = rates_from_pairs(
+        [("pass", "pass"), ("fail", "unable"), ("pass", "unable")]
+    )
+    decision = compare(current, candidate)
+
+    report = format_report("escalation_judgment", current, candidate, decision)
+
+    unable_line = next(line for line in report.splitlines() if "unable" in line)
+    assert re.findall(r"\d+", unable_line) == ["0", "2"]

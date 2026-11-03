@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pet_helper.evals import judge as judge_module
 from pet_helper.evals import labels as labels_module
@@ -87,8 +87,12 @@ def _bootstrap(items: Sequence[DevItem], lm: Any) -> list[judge_module.FewShotEx
     class Judge(dspy.Signature):
         slice: str = dspy.InputField()
         critique: str = dspy.OutputField()
-        verdict: str = dspy.OutputField()
+        verdict: Literal["pass", "fail", "unable"] = dspy.OutputField()
 
+    # the rubric of the real judge, so a demo is reasoned under the rule the judge applies
+    instructed = Judge.with_instructions(
+        judge_module.CRITERION_PROMPTS[_BOOTSTRAPPED_CRITERION]
+    )
     by_slice = {item.slice: item for item in items}
 
     def metric(example: Any, prediction: Any, trace: Any = None) -> bool:
@@ -102,7 +106,7 @@ def _bootstrap(items: Sequence[DevItem], lm: Any) -> list[judge_module.FewShotEx
         metric=metric, max_bootstrapped_demos=_MAX_DEMOS, max_labeled_demos=_MAX_DEMOS
     )
     with dspy.context(lm=lm):
-        compiled = optimizer.compile(dspy.Predict(Judge), trainset=trainset)
+        compiled = optimizer.compile(dspy.Predict(instructed), trainset=trainset)
     return [
         judge_module.FewShotExample(
             _BOOTSTRAPPED_CRITERION,

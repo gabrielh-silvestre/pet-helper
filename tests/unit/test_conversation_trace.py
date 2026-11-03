@@ -5,13 +5,14 @@ from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage
+from opentelemetry import trace
 
 from pet_helper.catalog import Catalog
 from pet_helper.conversation import KitError, build_assistant
 from pet_helper.gateway import FakeGateway
 from pet_helper.guard import Guard
 from pet_helper.orders.api import FAILURE_ENV
-from pet_helper.trace import Tracer
+from pet_helper.trace import Tracer, emit, turn_scope
 
 KIT_DIR = Path(__file__).resolve().parents[2] / "kit"
 SESSION_ID = "session-trace"
@@ -327,3 +328,39 @@ def test_it_should_fail_on_an_incomplete_given_kit_even_when_the_environment_is_
 
     with pytest.raises(KitError):
         build_assistant(gateway=FakeGateway(), kit_dir=tmp_path)
+
+
+class _EventOnlyPort:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def event(self, kind: str, *, session_id: str, turn: int, **fields: Any) -> None:
+        self.events.append(kind)
+
+
+class _ShutdownPort(_EventOnlyPort):
+    def __init__(self) -> None:
+        super().__init__()
+        self.shutdowns = 0
+
+    def shutdown(self) -> None:
+        self.shutdowns += 1
+
+
+def test_it_should_shut_down_the_tracer_port_when_the_assistant_closes():
+    port = _ShutdownPort()
+    assistant = build_assistant(gateway=FakeGateway([]), tracer=port, kit_dir=KIT_DIR)
+
+    assistant.close()
+
+    assert port.shutdowns == 1
+
+
+def test_it_should_run_a_turn_without_a_span_when_the_port_only_has_events():
+    port = _EventOnlyPort()
+
+    with turn_scope(port, SESSION_ID, 1):
+        emit("turn.start", **{"gen_ai.input.messages": "oi"})
+        span_is_recording = trace.get_current_span().is_recording()
+
+    assert (port.events, span_is_recording) == (["turn.start"], False)

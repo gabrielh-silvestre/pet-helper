@@ -396,3 +396,29 @@ def test_it_should_force_a_new_validation_only_from_the_accept_module():
     ]
 
     assert callers == ["optimize/accept.py"]
+
+
+# the prompt of the bootstrap model
+
+
+def _bootstrap_prompt(lm) -> str:
+    return "\n".join(m["content"] for m in lm.history[0]["messages"])
+
+
+def test_it_should_give_the_bootstrap_model_the_rubric_of_the_escalation_criterion(
+    escalation,
+):
+    _, items, lm = escalation
+
+    select_examples("escalation_judgment", items, lm=lm)
+
+    rubric = judge_module.CRITERION_PROMPTS["escalation_judgment"]
+    assert rubric in _bootstrap_prompt(lm)
+
+
+def test_it_should_limit_the_bootstrap_verdict_to_pass_fail_or_unable(escalation):
+    _, items, lm = escalation
+
+    select_examples("escalation_judgment", items, lm=lm)
+
+    assert "pass; fail; unable" in _bootstrap_prompt(lm)

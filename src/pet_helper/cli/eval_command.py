@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from pet_helper.catalog import Catalog
-from pet_helper.conversation import DEFAULT_KIT_DIR, KitError
+from pet_helper.conversation import DEFAULT_KIT_DIR, KitError, system_prompt_sha256
 from pet_helper.evals import (
     EvalCase,
     ask_confirmation,
@@ -169,7 +169,7 @@ def _reference_round(root: Path, case_id: str) -> str | None:
 
 
 def _decisive_reference(
-    args: argparse.Namespace, root: Path, case_id: str
+    args: argparse.Namespace, root: Path, case_id: str, system_prompt: str | None
 ) -> tuple[str | None, bool]:
     """The round a decisive rerun decides against, and whether such a round was found."""
     if args.case is None or args.runs <= _DECISIVE_ABOVE_RUNS:
@@ -183,6 +183,13 @@ def _decisive_reference(
         return None, False
     if not args.held_out:
         print(f"Decisive rerun against round {reference}")
+    info = json.loads((root / reference / "round.json").read_text(encoding="utf-8"))
+    recorded = info.get("assistant_prompt_sha256")
+    if recorded and recorded != system_prompt_sha256(system_prompt):
+        print(
+            "Warning: the reference round used another assistant prompt than this rerun",
+            file=sys.stderr,
+        )
     return reference, True
 
 
@@ -229,7 +236,9 @@ def _new_round(
         if smoke and not held_out
         else root
     )
-    reference, reachable = _decisive_reference(args, root, selection[0].id)
+    reference, reachable = _decisive_reference(
+        args, root, selection[0].id, system_prompt
+    )
     if not reachable:
         return 1
     result = run_round(

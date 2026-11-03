@@ -117,13 +117,15 @@ def save_round(
     *,
     case_id: str = "steady",
     runs: int = 3,
+    prompt_sha256: str | None = None,
 ) -> None:
     directory = root / round_id
     directory.mkdir(parents=True)
     write_rows(directory, [{"case_id": case_id, "suite": suite, "cost_usd": ""}])
-    (directory / "round.json").write_text(
-        json.dumps({"round_id": round_id, "runs": runs})
-    )
+    info = {"round_id": round_id, "runs": runs}
+    if prompt_sha256 is not None:
+        info["assistant_prompt_sha256"] = prompt_sha256
+    (directory / "round.json").write_text(json.dumps(info))
 
 
 def reference_of_newest_round(root: Path) -> str:
@@ -1267,3 +1269,63 @@ def test_it_should_spend_nothing_when_the_prompt_file_is_refused(
     assert gateways.gateways == []
     assert saved_rounds(env.results_root) == []
     assert "US$" not in "\n".join(output_lines(capsys))
+
+
+# the decisive rerun checks the prompt of its reference
+
+
+def _candidate_sha256() -> str:
+    return hashlib.sha256(CANDIDATE_PROMPT.encode()).hexdigest()
+
+
+def test_it_should_warn_on_stderr_when_the_reference_round_used_another_prompt(
+    monkeypatch, env, gateways, capsys
+):
+    save_round(
+        env.results_root,
+        "2026-10-31T090000",
+        "capability",
+        prompt_sha256=_candidate_sha256(),
+    )
+
+    eval_steady(monkeypatch, env, gateways, "--runs", "10")
+
+    assert "prompt" in capsys.readouterr().err.lower()
+
+
+def test_it_should_not_warn_when_the_reference_round_used_the_same_current_prompt(
+    monkeypatch, env, gateways, capsys
+):
+    save_round(
+        env.results_root,
+        "2026-10-31T090000",
+        "capability",
+        prompt_sha256=system_prompt_sha256(),
+    )
+
+    eval_steady(monkeypatch, env, gateways, "--runs", "10")
+
+    assert "prompt" not in capsys.readouterr().err.lower()
+
+
+def test_it_should_not_warn_when_the_rerun_uses_the_prompt_file_of_the_reference_round(
+    monkeypatch, env, gateways, candidate_file, capsys
+):
+    save_round(
+        env.results_root,
+        "2026-10-31T090000",
+        "capability",
+        prompt_sha256=_candidate_sha256(),
+    )
+
+    eval_steady(
+        monkeypatch,
+        env,
+        gateways,
+        "--runs",
+        "10",
+        "--system-prompt-file",
+        str(candidate_file),
+    )
+
+    assert "prompt" not in capsys.readouterr().err.lower()

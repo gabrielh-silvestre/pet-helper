@@ -27,6 +27,14 @@ _METRIC_CALLS_PER_REFLECTION = 10
 Runner = Callable[[EvalCase, str], checks.RunRecord]
 
 
+class CapStopped(BudgetExceeded):
+    """The cap or a refused rollout ended the run; `candidate` is the best prompt found until then."""
+
+    def __init__(self, message: str, candidate: str):
+        super().__init__(message)
+        self.candidate = candidate
+
+
 def load_dev_cases(cases_dir: Path) -> list[EvalCase]:
     if _HELD_OUT in cases_dir.resolve().parts:
         raise OptimizeRefused(f"{cases_dir}: held-out cases are never optimized")
@@ -144,6 +152,8 @@ def _examples(cases: Sequence[EvalCase]) -> list[dspy.Example]:
 
 
 class _ReflectionCost(BaseCallback):
+    # shortcut: reads lm.history[-1], racy if GEPA is parallelized, and the cost comes from the litellm
+    # price table instead of genai-prices; upgrade when GEPA runs in parallel
     """Charges the cost of each reflection request to the budget (dspy callbacks cannot raise)."""
 
     def __init__(self, lm: Any, budget: round_budget.RoundBudget):
@@ -174,8 +184,12 @@ def optimize_prompt(
     # without a budget nothing caps the spend here
     spend = budget or round_budget.RoundBudget(Decimal("Infinity"))
     refused = threading.Event()
+    capped = threading.Event()
+    rollouts = 0
 
     def capped_runner(case: EvalCase, system_prompt: str) -> checks.RunRecord:
+        nonlocal rollouts
+        rollouts += 1
         # dspy scores a raising rollout as a failure, so the refusal is remembered here
         try:
             return runner(case, system_prompt)
@@ -186,7 +200,12 @@ def optimize_prompt(
     def must_stop(_state: Any) -> bool:
         # room for one more reflection call, the dearest model of the run
         reflection_reserve = round_budget.JUDGE_CALL_RESERVE_USD
-        return refused.is_set() or spend.spent + reflection_reserve > spend.cap
+        if refused.is_set():
+            return True
+        # GEPA runs this check once more at its natural end, which is no cap stop
+        if rollouts < max_metric_calls and spend.spent + reflection_reserve > spend.cap:
+            capped.set()
+        return capped.is_set()
 
     gepa = dspy.GEPA(
         metric=metric,
@@ -201,14 +220,17 @@ def optimize_prompt(
             trainset=_examples(train),
             valset=_examples(val),
         )
-    if must_stop(None):
-        raise BudgetExceeded(
-            f"The cap of US$ {spend.cap} stopped the run (spent US$ {spend.spent})"
-        )
     instructions = best.predict.signature.instructions
-    return (
+    candidate = (
         seed_prompt if instructions == inspect.cleandoc(seed_prompt) else instructions
     )
+    if refused.is_set() or capped.is_set():
+        raise CapStopped(
+            f"The cap of US$ {spend.cap} stopped the run "
+            f"(spent US$ {spend.spent}, {rollouts} metric calls)",
+            candidate,
+        )
+    return candidate
 
 
 def estimate_usd(max_metric_calls: int) -> Decimal:

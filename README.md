@@ -61,6 +61,7 @@ As ferramentas são `search_policies`, `get_order`, `search_catalog` e `escalate
 | `PET_HELPER_TRACE_CONTENT` | `0` grava só o tamanho do texto livre no rastro |
 | `LANGSMITH_API_KEY` | liga o envio dos spans, já mascarados, para a LangSmith; sem ela, os spans só vão para arquivo |
 | `LANGSMITH_PROJECT` | projeto da LangSmith (padrão `pet-helper`) |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | URL completa do envio dos spans, usada como veio (sem acrescentar `/v1/traces`). Padrão: a nuvem US da LangSmith, `https://api.smith.langchain.com/otel/v1/traces`. Conta EU: `https://eu.api.smith.langchain.com/otel/v1/traces`; self-host: `<url>/api/v1/otel/v1/traces`. Os spans seguem mascarados e com o `x-api-key`; `LANGSMITH_ENDPOINT` é ignorada |
 
 ## Trade-offs
 
@@ -140,7 +141,7 @@ Os eventos de domínio são span events do raiz do turno:
 | `guard.output` | `pet_helper.invalid_skus`, `pet_helper.unretrieved_sources`, `pet_helper.regenerated` |
 | `escalation` | `pet_helper.escalation_reason` |
 
-- **Destinos.** O arquivo local é sempre gravado. Com `LANGSMITH_API_KEY`, os mesmos spans também vão para a LangSmith (projeto em `LANGSMITH_PROJECT`, padrão `pet-helper`), e as rodadas de eval deixam lá os traces das conversas. Sem a chave, nada sai da máquina e o assistente funciona igual. A decisão está no [ADR 0003](docs/adr/0003-otel-langsmith.md).
+- **Destinos.** O arquivo local é sempre gravado. Com `LANGSMITH_API_KEY`, os mesmos spans também vão para a LangSmith (projeto em `LANGSMITH_PROJECT`, padrão `pet-helper`), e as rodadas de eval deixam lá os traces das conversas. Sem a chave, nada sai da máquina e o assistente funciona igual. Com a chave, ao sair do `chat` o programa imprime em stderr `flushing traces to LangSmith (Ctrl-C to skip)` e espera o envio dos últimos spans, até cerca de 10 s se a rede estiver fora; Ctrl-C pula a espera. A decisão está no [ADR 0003](docs/adr/0003-otel-langsmith.md).
 - **Máscara.** O `MaskingSpanExporter` fica na frente de cada exporter, o do arquivo e o da LangSmith, e passa cada texto do span por `Guard.mask`: CPF vira o pseudônimo estável `cpf#<8 hex>`, e e-mail e telefone são substituídos. Depois da máscara, o texto é truncado em 10.000 caracteres.
 - **Interruptor de conteúdo.** O texto livre vem ligado por padrão, mascarado, para que o rastro explique a resposta. Com `PET_HELPER_TRACE_CONTENT=0`, os campos `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.retrieval.query.text`, `gen_ai.tool.call.arguments` e `gen_ai.tool.call.result` gravam só o tamanho. As rodadas de eval sempre rodam com o conteúdo ligado, porque a análise de erro lê as conversas. A captura de conteúdo do OpenLLMetry fica sempre desligada: o prompt de sistema e as respostas intermediárias do modelo não entram no rastro.
 - **Tempo até o primeiro chunk.** `gen_ai.server.time_to_first_token` conta o primeiro chunk com texto, em segundos, e fica ausente quando a chamada não fez streaming. Com thinking ligado, o valor inclui o tempo de raciocínio que antecede o texto. Um teste sem modelo varre os rastros de exemplo atrás de CPF e e-mail crus, e cada rodada de eval repete essa varredura em seus arquivos.
@@ -222,6 +223,8 @@ uv run pet-helper metrics evals/results/<rodada>/traces
 ```
 
 O comando lê os arquivos de spans (`spans/*.jsonl`) da pasta, sem chamar modelo, e imprime:
+
+Estado em 2026-11-03: até o passo P1b do dono, o `metrics` ainda lê o JSONL antigo (`<session_id>.jsonl`, ao lado de `spans/`); a leitura de `spans/` entra com a História 3 da unidade `market-tools-adoption`.
 
 - por provider e modelo: chamadas, tempo até o primeiro chunk (p50 e p95, em ms), chamadas sem streaming (`ttft_missing`), tokens por segundo mediano depois do primeiro chunk, tokens de entrada, saída, cache read e cache write, custo em US$ e taxa de acerto do cache (`cache_read / input_tokens`);
 - por tool: chamadas e taxa de erro;

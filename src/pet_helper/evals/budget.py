@@ -66,18 +66,22 @@ class RoundBudget:
         self.halted = False
         self.price_unknown = False
         self._cap = cap
-        self.spent = Decimal(0)
+        self._spent = Decimal(0)
         self._in_flight_total = Decimal(0)
         # LangChain runs the sync callbacks of a call on the thread that makes it, so the hooks
         # of one call share a thread; async callbacks may not, and would need ids instead
         self._reserves = _ThreadReserves()
         self._lock = threading.Lock()
 
+    @property
+    def spent(self) -> Decimal:
+        return self._spent
+
     def before_call(self, reserve: Decimal) -> None:
         if self.halted:
             raise BudgetExceeded("A call ended without usage, the round stopped")
         with self._lock:
-            committed = self.spent + self._in_flight_total
+            committed = self._spent + self._in_flight_total
             if committed + reserve > self._cap:
                 raise BudgetExceeded(
                     f"Round cap of US$ {self._cap} reached "
@@ -99,4 +103,4 @@ class RoundBudget:
             stack = self._reserves.stack
             reserve = stack.pop() if stack else Decimal(0)
             self._in_flight_total -= reserve
-            self.spent += reserve if actual is None else actual
+            self._spent += reserve if actual is None else actual
