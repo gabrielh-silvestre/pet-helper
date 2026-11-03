@@ -40,22 +40,25 @@ def _report_escalation(cause: str | None) -> int:
 def _converse() -> int:
     assistant = build_assistant(trace_dir=Path("traces") / date.today().isoformat())
     session_id = uuid4().hex
-    while True:
-        try:
-            line = input("> ").strip()
-            if not line:
-                continue
-            reply = assistant.turn(session_id, line)
-            print(reply.text)
-            if reply.escalation:
-                print(f"[escalonado: {reply.escalation}]")
-                return _report_escalation(assistant.escalation_cause(session_id))
-        except EOFError:
-            print()
-            return 0
-        except KeyboardInterrupt:
-            print()
-            return 130
+    try:
+        while True:
+            try:
+                line = input("> ").strip()
+                if not line:
+                    continue
+                reply = assistant.turn(session_id, line)
+                print(reply.text)
+                if reply.escalation:
+                    print(f"[escalonado: {reply.escalation}]")
+                    return _report_escalation(assistant.escalation_cause(session_id))
+            except EOFError:
+                print()
+                return 0
+            except KeyboardInterrupt:
+                print()
+                return 130
+    finally:
+        assistant.close()
 
 
 def _cell(value: float | None, scale: float = 1, digits: int = 0) -> str:

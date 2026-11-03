@@ -254,12 +254,13 @@ def eval_task(
     judge_client: JudgeClient | None = None,
     budget: RoundBudget,
     epoch_offset: int = 0,
+    tracer: Tracer | None = None,
 ) -> Task:
     guard = Guard(Catalog(kit_dir / "catalog.csv"))
     conductor = _Conductor(
         kit_dir=kit_dir,
         guard=guard,
-        tracer=Tracer(round_dir / "traces", mask=guard.mask),
+        tracer=tracer or Tracer(round_dir / "traces", mask=guard.mask),
         gateway_factory=gateway_factory,
         handler_factory=partial(
             TraceCallbackHandler,
