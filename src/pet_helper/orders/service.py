@@ -50,6 +50,7 @@ class OrderView(BaseModel):
     status: str
     items: list[OrderItemView]
     total: Decimal
+    discount: Decimal = Decimal("0")
     region: str
     payment_method: str
     delivered_on: date | None = None

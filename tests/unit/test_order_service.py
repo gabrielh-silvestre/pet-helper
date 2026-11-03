@@ -1,6 +1,7 @@
 import json
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ from pet_helper.orders.api import FAILURE_ENV, ApiResponse, MockOrderApi
 OWNER_CPF = Cpf("00000000191")
 OTHER_CPF = Cpf("00000000272")
 TODAY_ENV = "PET_HELPER_TODAY"
+KIT_ORDERS = Path(__file__).resolve().parents[2] / "kit" / "orders.json"
 
 
 class _FakeOrderApi:
@@ -131,11 +133,35 @@ def test_it_should_expose_only_the_allowlisted_fields_on_a_found_order_view():
             }
         ],
         "total": Decimal("159.80"),
+        "discount": Decimal("10.00"),
         "region": "Sul",
         "payment_method": "Cartão",
         "delivered_on": date(2026, 10, 31),
         "days_since_delivery": 3,
     }
+
+
+def test_it_should_default_the_discount_of_an_order_view_to_zero():
+    body = _order_body()
+    del body["discount"]
+    api = _FakeOrderApi([ApiResponse(200, body)])
+    service = OrderService(api, clock=_FixedClock(date(2026, 11, 3)))
+
+    result = service.lookup(OWNER_CPF, "PED-10001")
+
+    assert isinstance(result, Found)
+    assert result.order.discount == Decimal("0")
+
+
+def test_it_should_surface_the_discount_of_the_kit_order_ped_10006():
+    service = OrderService(
+        MockOrderApi(KIT_ORDERS), clock=_FixedClock(date(2026, 11, 3))
+    )
+
+    result = service.lookup(Cpf("00000000353"), "PED-10006")
+
+    assert isinstance(result, Found)
+    assert result.order.discount == Decimal("25.0")
 
 
 def test_it_should_return_a_found_order_for_the_owner_over_the_mock_order_api(mock_api):
