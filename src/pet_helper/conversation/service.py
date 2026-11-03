@@ -10,6 +10,7 @@ from langgraph.errors import GraphRecursionError
 
 from pet_helper.catalog import Catalog
 from pet_helper.conversation.graph import HANDOFF_REPLY, build_graph, handoff_state
+from pet_helper.conversation.prompt import SYSTEM_PROMPT
 from pet_helper.conversation.state import EscalationReason
 from pet_helper.conversation.tools import ToolRegistry, build_tool_registry
 from pet_helper.gateway import ModelGateway, build_gateway
@@ -62,9 +63,12 @@ class Assistant:
         registry: ToolRegistry | None = None,
         tracer: TracerPort | None = None,
         handler_factory: Callable[[], TraceCallbackHandler] = TraceCallbackHandler,
+        system_prompt: str = SYSTEM_PROMPT,
     ):
         selected_registry = registry if registry is not None else ToolRegistry()
-        self._graph = build_graph(gateway, guard, selected_registry.tools)
+        self._graph = build_graph(
+            gateway, guard, selected_registry.tools, system_prompt=system_prompt
+        )
         self._tracer: TracerPort = tracer if tracer is not None else NullTracer()
         self._handler_factory = handler_factory
         self._turns: dict[str, int] = {}
@@ -171,6 +175,7 @@ def build_assistant(
     today: date | None = None,
     trace_dir: Path | None = None,
     handler_factory: Callable[[], TraceCallbackHandler] = TraceCallbackHandler,
+    system_prompt: str | None = None,
 ) -> Assistant:
     resolved_kit_dir = _resolve_kit_dir(kit_dir)
     if registry is None:
@@ -196,4 +201,5 @@ def build_assistant(
         selected_registry,
         selected_tracer,
         handler_factory,
+        SYSTEM_PROMPT if system_prompt is None else system_prompt,
     )

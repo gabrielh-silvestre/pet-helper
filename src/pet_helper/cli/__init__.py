@@ -26,7 +26,9 @@ _OPTIMIZE_EXTRA_HINT = (
 
 
 def _optimize(
-    round_dir: Path, environment: "optimize_command.OptimizeEnvironment | None"
+    args: argparse.Namespace,
+    judge_environment: "optimize_command.OptimizeEnvironment | None",
+    assistant_environment: "optimize_command.AssistantEnvironment | None",
 ) -> int:
     try:
         # lazy: dspy only exists with the optimize extra
@@ -36,7 +38,14 @@ def _optimize(
             raise
         print(_OPTIMIZE_EXTRA_HINT, file=sys.stderr)
         return 1
-    return command.run_judge(round_dir, environment or command.default_environment())
+    if args.optimize_command == "assistant":
+        return command.run_assistant(
+            args.targets,
+            assistant_environment or command.default_assistant_environment(),
+        )
+    return command.run_judge(
+        args.round_dir, judge_environment or command.default_environment()
+    )
 
 
 def _chat() -> int:
@@ -124,6 +133,7 @@ def main(
     *,
     eval_environment: EvalEnvironment | None = None,
     optimize_environment: "optimize_command.OptimizeEnvironment | None" = None,
+    assistant_environment: "optimize_command.AssistantEnvironment | None" = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="pet-helper")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -134,11 +144,12 @@ def main(
         dest="optimize_command", required=True
     )
     optimize.add_parser("judge").add_argument("round_dir", type=Path)
+    optimize.add_parser("assistant").add_argument("targets", type=Path)
     args = parser.parse_args(argv)
     if args.command == "metrics":
         return _metrics(args.directory)
     if args.command == "eval":
         return eval_command.run(args, eval_environment)
     if args.command == "optimize":
-        return _optimize(args.round_dir, optimize_environment)
+        return _optimize(args, optimize_environment, assistant_environment)
     return _chat()

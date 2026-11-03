@@ -16,11 +16,17 @@ import json
 import shutil
 import sys
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import yaml
 
+from pet_helper.conversation import Reply
 from pet_helper.evals import judge as judge_module
+from pet_helper.evals.cases import Check, EvalCase
+from pet_helper.evals.checks import RunRecord
 
 TEST_MARKER = "TESTSPLIT"
 JUDGE_SOURCE = Path(judge_module.__file__)
@@ -192,3 +198,90 @@ class FakeValidation:
                 round_dir, verdicts, "candidate", forced=force_new_validation
             )
         return self.code
+
+
+# the assistant optimizer: cases on disk, a runner and a reflection model that need no network
+
+GOOD_PROMPT = "NEWPROMPT v1"
+REQUIRED_TERM = "garantia"
+
+
+def make_cases(count: int) -> list[EvalCase]:
+    return [
+        EvalCase(
+            id=f"case-{number:02d}",
+            today=date(2026, 11, 3),
+            turns=[f"Pergunta {number} sobre a política de garantia"],
+            checks=[Check(type="must_include", value=REQUIRED_TERM)],
+        )
+        for number in range(count)
+    ]
+
+
+def write_cases(directory: Path, cases: list[EvalCase]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for case in cases:
+        dump = case.model_dump(mode="json", exclude_none=True)
+        (directory / f"{case.id}.yaml").write_text(
+            yaml.safe_dump(dump), encoding="utf-8"
+        )
+
+
+class PromptSensitiveRunner:
+    """Answers the required term only under a prompt that carries `GOOD_PROMPT`; records every call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, case: EvalCase, system_prompt: str) -> RunRecord:
+        self.calls.append((case.id, system_prompt))
+        text = REQUIRED_TERM if GOOD_PROMPT in system_prompt else "nada a declarar"
+        return RunRecord(replies=[Reply(text=text)])
+
+
+def reflection_lm(instruction: str = GOOD_PROMPT):
+    """A dspy reflection model that always proposes `instruction` (GEPA asks for JSON)."""
+    import dspy
+    from dspy.utils import DummyLM
+
+    return DummyLM([{"new_instruction": instruction}] * 200, adapter=dspy.JSONAdapter())
+
+
+class ChargingRunner(PromptSensitiveRunner):
+    """Charges the budget the way a round does: the reserve before the call, the real cost after it."""
+
+    def __init__(
+        self, budget, cost: Decimal, reserve: Decimal = Decimal("0.1")
+    ) -> None:
+        super().__init__()
+        self.budget = budget
+        self.cost = cost
+        self.reserve = reserve
+
+    def __call__(self, case: EvalCase, system_prompt: str) -> RunRecord:
+        self.budget.before_call(self.reserve)
+        record = super().__call__(case, system_prompt)
+        self.budget.on_cost(self.cost)
+        return record
+
+
+def priced_reflection_lm(cost: Decimal, instruction: str = GOOD_PROMPT):
+    """A reflection model whose every call reports `cost` in its history, as a billed dspy LM does.
+
+    `calls` counts the requests it received (dspy may send two for one predictor call).
+    """
+    import dspy
+    from dspy.utils import DummyLM
+
+    class Priced(DummyLM):
+        calls = 0
+
+        def forward(self, *args, **kwargs):
+            self.calls += 1
+            return super().forward(*args, **kwargs)
+
+        def update_history(self, entry):
+            entry["cost"] = float(cost)
+            super().update_history(entry)
+
+    return Priced([{"new_instruction": instruction}] * 200, adapter=dspy.JSONAdapter())

@@ -1,3 +1,4 @@
+from pet_helper.conversation.prompt import SYSTEM_PROMPT as SYSTEM_PROMPT
 from pet_helper.conversation.prompt import (
     system_prompt_sha256 as system_prompt_sha256,
 )

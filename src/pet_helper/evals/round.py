@@ -727,6 +727,7 @@ def run_round(
     round_id: str | None = None,
     batch_wait_seconds: float = 0.0,
     batch_poll_seconds: float = 0.0,
+    system_prompt: str | None = None,
 ) -> RoundResult:
     if reference_round is not None and len(selection) != 1:
         raise ValueError("A decisive rerun takes exactly one case")
@@ -784,6 +785,7 @@ def run_round(
                 budget=budget,
                 epoch_offset=made,
                 tracer=tracer,
+                system_prompt=system_prompt,
             )
             try:
                 run_eval(task, round_dir=directory, max_samples=max_samples)
@@ -834,7 +836,7 @@ def run_round(
             ),
             "judge": judge_model,
         },
-        "assistant_prompt_sha256": system_prompt_sha256(),
+        "assistant_prompt_sha256": system_prompt_sha256(system_prompt),
         "started_at": started.isoformat(),
         "finished_at": clock().isoformat(),
         "runs": runs,

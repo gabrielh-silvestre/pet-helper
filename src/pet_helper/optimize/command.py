@@ -10,10 +10,14 @@ from typing import Any
 
 import dspy
 
+from pet_helper.catalog import Catalog
+from pet_helper.conversation import DEFAULT_KIT_DIR, SYSTEM_PROMPT
 from pet_helper.evals import ask_confirmation, budget
 from pet_helper.evals import judge as judge_module
 from pet_helper.evals import labels as labels_module
+from pet_helper.gateway import build_gateway
 from pet_helper.optimize import OptimizeRefused, accept
+from pet_helper.optimize import assistant as assistant_module
 from pet_helper.optimize.judge import (
     estimate_usd,
     load_dev_items,
@@ -23,6 +27,9 @@ from pet_helper.optimize.judge import (
 from pet_helper.trace import BudgetExceeded, read_jsonl
 
 Validation = Callable[..., int]
+RoundBudget = budget.RoundBudget
+_ASSISTANT_CAP_USD = Decimal(5)
+_HELD_OUT_ENV = "PET_HELPER_HELD_OUT"
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,38 @@ def default_environment() -> OptimizeEnvironment:
     return OptimizeEnvironment(
         lm=dspy.LM(f"anthropic/{model}", max_tokens=budget.JUDGE_MAX_TOKENS),
         judge_path=Path(judge_module.__file__),
+    )
+
+
+@dataclass(frozen=True)
+class AssistantEnvironment:
+    cases_dir: Path
+    candidate_path: Path
+    reflection_lm: Any
+    # runner(case, system_prompt) -> RunRecord
+    runner: assistant_module.Runner
+    cap_usd: Decimal = _ASSISTANT_CAP_USD
+    max_metric_calls: int = 300
+    # the kit whose catalog the sku checks read; None skips them
+    kit_dir: Path | None = None
+    # charged by the rollouts and the reflection; None starts one at cap_usd
+    budget: RoundBudget | None = None
+
+
+def default_assistant_environment() -> AssistantEnvironment:
+    kit_dir = Path(DEFAULT_KIT_DIR)
+    spend = budget.RoundBudget(_ASSISTANT_CAP_USD)
+    return AssistantEnvironment(
+        cases_dir=Path("evals/cases"),
+        candidate_path=Path(".ignore/assistant-prompt-candidate.txt"),
+        reflection_lm=dspy.LM(
+            f"anthropic/{budget.JUDGE_MODEL}", max_tokens=budget.JUDGE_MAX_TOKENS
+        ),
+        runner=lambda case, system_prompt: assistant_module.run_case(
+            case, system_prompt, gateway=build_gateway(), kit_dir=kit_dir, budget=spend
+        ),
+        kit_dir=kit_dir,
+        budget=spend,
     )
 
 
@@ -137,3 +176,52 @@ def run_judge(round_dir: Path, environment: OptimizeEnvironment) -> int:
             environment.judge_path.write_bytes(original)
     print("Candidate kept" if kept else "Candidate rejected, the current judge stays")
     return 0
+
+
+def _confirm_assistant_run(max_metric_calls: int, cap_usd: Decimal) -> None:
+    estimate = assistant_module.estimate_usd(max_metric_calls)
+    print(f"Estimate: US$ {estimate:.4f}")
+    try:
+        budget.RoundBudget(cap_usd).before_call(estimate)
+    except BudgetExceeded as exceeded:
+        raise OptimizeRefused(str(exceeded)) from exceeded
+    if not ask_confirmation("Run? [y/N] "):
+        raise OptimizeRefused("Aborted, nothing was called")
+
+
+def _optimize_assistant(targets_path: Path, environment: AssistantEnvironment) -> int:
+    if os.environ.get(_HELD_OUT_ENV) == "1":
+        raise OptimizeRefused(f"{_HELD_OUT_ENV} is set, nothing runs")
+    cases = assistant_module.load_dev_cases(environment.cases_dir)
+    targets = assistant_module.load_prompt_targets(targets_path, cases)
+    train, val = assistant_module.split_cases(cases, targets)
+    # GEPA can run one validation pass past max_metric_calls
+    _confirm_assistant_run(environment.max_metric_calls + len(val), environment.cap_usd)
+    known_skus = (
+        Catalog(environment.kit_dir / "catalog.csv").skus if environment.kit_dir else ()
+    )
+    candidate = assistant_module.optimize_prompt(
+        SYSTEM_PROMPT,
+        train,
+        val,
+        runner=environment.runner,
+        reflection_lm=environment.reflection_lm,
+        max_metric_calls=environment.max_metric_calls,
+        known_skus=known_skus,
+        budget=environment.budget or budget.RoundBudget(environment.cap_usd),
+    )
+    if candidate == SYSTEM_PROMPT:
+        print("No improvement, the current prompt stays")
+        return 0
+    environment.candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    environment.candidate_path.write_text(candidate, encoding="utf-8")
+    print(f"Candidate written to {environment.candidate_path}")
+    return 0
+
+
+def run_assistant(targets_path: Path, environment: AssistantEnvironment) -> int:
+    try:
+        return _optimize_assistant(targets_path, environment)
+    except (OptimizeRefused, BudgetExceeded) as stopped:
+        print(stopped, file=sys.stderr)
+        return 1

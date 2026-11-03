@@ -1,6 +1,7 @@
 """The pet-helper eval command: selection, pre-flight, confirmation, smoke, held-out, judge modes and the PII scan (no real model)."""
 
 import csv
+import hashlib
 import json
 import re
 import tempfile
@@ -13,12 +14,14 @@ from typing import Any
 import pytest
 import yaml
 from inspect_ai.log import read_eval_log, write_eval_log
+from langchain_core.messages import SystemMessage
 
 from pet_helper.cli import EvalEnvironment, main
-from pet_helper.conversation import KitError
+from pet_helper.conversation import KitError, system_prompt_sha256
+from pet_helper.conversation.prompt import SYSTEM_PROMPT
 from pet_helper.evals.judge import current_verdicts
 from pet_helper.evals.round import GitState
-from pet_helper.gateway import ModelConfigError
+from pet_helper.gateway import FakeGateway, ModelConfigError
 from pet_helper.orders.api import FAILURE_ENV
 from pet_helper.trace.tracer import CONTENT_ENV
 from tests.unit.test_cli import _set_input_lines
@@ -1144,3 +1147,123 @@ def test_it_should_refuse_to_collect_a_round_without_a_pending_batch(
 
     assert code == 1
     assert "no pending batch" in output_lines(capsys)[-1]
+
+
+# the candidate assistant prompt (--system-prompt-file)
+
+CANDIDATE_PROMPT = "Prompt candidato de teste\nsegunda linha\n"
+
+
+class RecordingGateways:
+    """Gateway factory that scripts the steady case and keeps every gateway it built."""
+
+    def __init__(self) -> None:
+        self.gateways: list[FakeGateway] = []
+
+    def __call__(self, case, epoch) -> FakeGateway:
+        gateway = FakeGateway(["Claro, posso ajudar.", "O prazo é de 7 dias."])
+        self.gateways.append(gateway)
+        return gateway
+
+    def system_prompts(self) -> set[str]:
+        return {
+            call[0].content
+            for gateway in self.gateways
+            for call in gateway.calls
+            if isinstance(call[0], SystemMessage)
+        }
+
+
+def eval_steady(monkeypatch, env, gateways, *extra: str):
+    return eval_cli(
+        monkeypatch,
+        replace(env, gateway_factory=gateways),
+        "--case",
+        "steady",
+        "--judge",
+        "none",
+        *extra,
+    )
+
+
+@pytest.fixture
+def gateways() -> RecordingGateways:
+    return RecordingGateways()
+
+
+@pytest.fixture
+def candidate_file(tmp_path) -> Path:
+    path = tmp_path / "candidate.txt"
+    path.write_text(CANDIDATE_PROMPT, encoding="utf-8")
+    return path
+
+
+def test_it_should_run_the_round_with_the_text_of_the_prompt_file(
+    monkeypatch, env, gateways, candidate_file
+):
+    eval_steady(monkeypatch, env, gateways, "--system-prompt-file", str(candidate_file))
+
+    assert gateways.system_prompts() == {CANDIDATE_PROMPT}
+
+
+def test_it_should_record_the_hash_of_the_prompt_file_in_round_json(
+    monkeypatch, env, gateways, candidate_file
+):
+    eval_steady(monkeypatch, env, gateways, "--system-prompt-file", str(candidate_file))
+
+    recorded = read_info(only_round(env.results_root))["assistant_prompt_sha256"]
+    assert recorded == hashlib.sha256(CANDIDATE_PROMPT.encode()).hexdigest()
+    assert recorded != system_prompt_sha256()
+
+
+def test_it_should_run_the_round_with_the_current_prompt_when_no_file_is_given(
+    monkeypatch, env, gateways
+):
+    eval_steady(monkeypatch, env, gateways)
+
+    assert gateways.system_prompts() == {SYSTEM_PROMPT}
+
+
+def test_it_should_record_the_current_prompt_hash_when_no_file_is_given(
+    monkeypatch, env, gateways
+):
+    eval_steady(monkeypatch, env, gateways)
+
+    recorded = read_info(only_round(env.results_root))["assistant_prompt_sha256"]
+    assert recorded == system_prompt_sha256()
+
+
+def test_it_should_refuse_a_missing_prompt_file_naming_it(
+    monkeypatch, env, gateways, tmp_path, capsys
+):
+    missing = tmp_path / "no-such-prompt.txt"
+
+    code = eval_steady(monkeypatch, env, gateways, "--system-prompt-file", str(missing))
+
+    assert code == 1
+    assert "no-such-prompt.txt" in "\n".join(output_lines(capsys))
+
+
+@pytest.mark.parametrize("content", ["", "  \n\n"])
+def test_it_should_refuse_an_empty_prompt_file_naming_it(
+    content, monkeypatch, env, gateways, tmp_path, capsys
+):
+    empty = tmp_path / "empty-prompt.txt"
+    empty.write_text(content, encoding="utf-8")
+
+    code = eval_steady(monkeypatch, env, gateways, "--system-prompt-file", str(empty))
+
+    assert code == 1
+    assert "empty-prompt.txt" in "\n".join(output_lines(capsys))
+
+
+def test_it_should_spend_nothing_when_the_prompt_file_is_refused(
+    monkeypatch, env, gateways, tmp_path, capsys
+):
+    missing = tmp_path / "no-such-prompt.txt"
+
+    eval_steady(monkeypatch, env, gateways, "--system-prompt-file", str(missing))
+
+    assert gateways.gateways == []
+    assert saved_rounds(env.results_root) == []
+    assert "US$" not in "\n".join(output_lines(capsys))

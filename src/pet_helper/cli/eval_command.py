@@ -98,6 +98,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--judge", choices=["sync", "batch", "none"], default="sync")
     parser.add_argument("--held-out", action="store_true")
     parser.add_argument("--runs", type=_positive_int, default=DEFAULT_RUNS)
+    parser.add_argument("--system-prompt-file", type=Path)
     saved = parser.add_mutually_exclusive_group()
     saved.add_argument("--collect", metavar="ROUND")
     saved.add_argument("--rejudge", metavar="ROUND")
@@ -185,11 +186,28 @@ def _decisive_reference(
     return reference, True
 
 
+def _read_prompt_file(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"{path}: {exc.strerror}") from exc
+    if not text.strip():
+        raise ValueError(f"{path}: the prompt file is empty")
+    return text
+
+
 def _new_round(
     args: argparse.Namespace, env: EvalEnvironment, cases_dir: Path, root: Path
 ) -> int:
     from pet_helper.evals import run_round
 
+    try:
+        system_prompt = _read_prompt_file(args.system_prompt_file)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     selection = [
         case
         for case in load_cases(cases_dir)
@@ -232,6 +250,7 @@ def _new_round(
         clock=env.clock,
         batch_wait_seconds=env.batch_wait_seconds,
         batch_poll_seconds=env.batch_poll_seconds,
+        system_prompt=system_prompt,
     )
     if result.aborted or result.round_id is None:
         return 1
