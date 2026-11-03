@@ -244,6 +244,16 @@ O juiz por modelo avalia só tom, julgamento de escalonamento e acerto do "não 
 - **Juiz Llama não validado.** O mesmo prompt pode rodar no `llama3.1:8b`, um juiz pequeno de concordância esperada menor. Esta entrega valida só o Sonnet, e o juiz Llama não foi validado contra rótulos humanos: nenhum veredito dele decide aceitação.
 - **Validação vale para um par.** A validação cobre o modelo do juiz e o prompt congelado, identificados por um hash que acompanha cada veredito. Mudar um dos dois exige validar de novo.
 
+## Limitações dos checks de texto
+
+Os checks `expected_value`, `must_include` e `must_not_include` comparam trechos literais da resposta. O assistente pode acertar com outras palavras, e a lista de trechos não acompanha todas as variações.
+
+- **Oscilação medida.** Em quatro rodadas visíveis com `--judge none`, o número de casos em 3 de 3 foi 15, 13, 15 e 14 de 20. Entre uma rodada e outra, os casos que mais oscilam são os de direção ("tem frete grátis ou não", "o cancelamento é permitido"), porque cada execução usa uma paráfrase nova da mesma conclusão.
+- **O que foi feito.** As listas dos casos que falharam por redação foram ampliadas só por adição, e cada entrada positiva ganhou o gêmeo negado em `must_not_include`, provado por testes sem modelo com respostas reais e respostas erradas escritas à mão. Os tipos de check não mudaram de semântica.
+- **O que não foi feito.** Não há regex de polaridade nem critério novo do juiz para esses casos. A revisão adversarial mostrou que a regex erra nos dois sentidos com respostas reais, e o juiz ainda não tem rótulos para validar um critério novo.
+- **Como ler o k/3.** Um caso abaixo de 3 de 3 pode ser redação do check e não erro do assistente. Os números de direção (por exemplo R$ 224,80 no `rn03-midwest-discount-not-free`) são mais estáveis que as frases, e a leitura da transcrição vem antes de culpar o assistente.
+- **Resultado otimista nas visíveis.** As listas foram ajustadas olhando os 20 casos visíveis. A taxa neles é de desenvolvimento, e só os casos reservados medem generalização.
+
 ## Loop de melhoria
 
 O ciclo completo está em [docs/directives/loop-melhoria.md](docs/directives/loop-melhoria.md): medir, conferir o avaliador, diagnosticar, escolher a categoria de maior frequência vezes severidade, corrigir pelo fluxo de desenvolvimento e aceitar ou rejeitar. A análise lê o `cases.csv` da rodada:
