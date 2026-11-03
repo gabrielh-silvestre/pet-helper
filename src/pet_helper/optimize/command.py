@@ -56,7 +56,6 @@ class AssistantEnvironment:
     cases_dir: Path
     candidate_path: Path
     reflection_lm: Any
-    # runner(case, system_prompt) -> RunRecord
     runner: assistant_module.Runner
     cap_usd: Decimal = _ASSISTANT_CAP_USD
     max_metric_calls: int = 300
