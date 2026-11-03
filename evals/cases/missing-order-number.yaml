@@ -5,9 +5,13 @@ behaviors:
 - missing_order_number
 turns:
 - Meu CPF é 000.000.002-72. Cadê meu pedido?
+absent_refs:
+- PED-00000
 checks:
 - type: tool_not_called
   value: get_order
-- type: must_include
+- type: expected_value
   value:
   - número do pedido
+  - número dele
+  - PED-00000

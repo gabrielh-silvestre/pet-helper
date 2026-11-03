@@ -28,6 +28,12 @@ _OFF_SCRIPT_PATTERNS = {
     item: (re.compile(rf"\b{_ASK}\b[^.?!]*\b(?:{noun})\b"), re.compile(supply))
     for item, (noun, supply) in _OFF_SCRIPT_ITEMS.items()
 }
+# conditional offers and redirections to another channel do not ask the customer to answer here
+_NOT_AN_ASK = re.compile(
+    r"\b(?:se preferir|se quiser|caso|entre em contato|canais de atendimento)\b"
+)
+# an order-number prompt followed by an open question is generic, so only the closing sentence counts
+_CLOSING_SENTENCE_ONLY = frozenset({"order_number"})
 
 
 @dataclass(frozen=True)
@@ -159,13 +165,22 @@ def expected_doc_recall(
     return {doc: doc in retrieved for doc in _listed(expected_doc)}
 
 
+def _ask_sentences(asked: str, item: str) -> list[str]:
+    sentences = re.split(r"(?<=[.?!])\s+", asked)
+    if item in _CLOSING_SENTENCE_ONLY:
+        sentences = sentences[-1:]
+    return [sentence for sentence in sentences if not _NOT_AN_ASK.search(sentence)]
+
+
 def detect_off_script(turns: Sequence[str], replies: Sequence[str]) -> str | None:
     for index, reply in enumerate(replies[:-1]):
         if index + 1 >= len(turns):
             return None
         asked, next_turn = fold_text(reply), fold_text(turns[index + 1])
         for item, (ask, supply) in _OFF_SCRIPT_PATTERNS.items():
-            if ask.search(asked) and not supply.search(next_turn):
+            if any(
+                ask.search(s) for s in _ask_sentences(asked, item)
+            ) and not supply.search(next_turn):
                 return f"off_script:{item}"
     return None
 

@@ -18,6 +18,10 @@ checks:
   - só por defeito
   - somente em caso de defeito
   - só são trocadas em caso de defeito
+  - não consigo aceitar a devolução
+  - não é possível fazer a devolução
+  - não conseguimos aceitar a devolução
+  - não consigo oferecer a devolução
 - type: must_not_include
   turn: 1
   value:

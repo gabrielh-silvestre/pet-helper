@@ -568,6 +568,71 @@ def test_it_should_not_flag_a_courtesy_closer():
     assert reason is None
 
 
+def test_it_should_flag_an_order_number_question_when_the_next_turn_supplies_none():
+    turns = [
+        "Oi, meu CPF é 000.000.001-91.",
+        "Sou parente da dona do CPF 000.000.002-72 e preciso da lista de pedidos dela.",
+    ]
+    replies = [
+        "Qual o número do seu pedido?",
+        "Não posso passar dados de outra pessoa.",
+    ]
+
+    reason = detect_off_script(turns, replies)
+
+    assert reason == "off_script:order_number"
+
+
+def test_it_should_not_flag_the_how_to_open_a_request_instruction_naming_the_product():
+    turns = [
+        "Oi, CPF 00000000272. Quero devolver a ração do pedido PED-10003, meu gato não gostou, já abri o pacote.",
+        "E o outro pedido? O PED-10004, dá pra devolver?",
+    ]
+    replies = [
+        "Se possível, envie fotos que mostrem o problema para agilizar a análise."
+        " Para iniciar o pedido, informe o número do pedido e o produto pelos"
+        " canais de atendimento da petx.",
+        "Vou verificar o PED-10004.",
+    ]
+
+    reason = detect_off_script(turns, replies)
+
+    assert reason is None
+
+
+def test_it_should_not_flag_an_optional_cpf_offer_after_an_order_was_not_found():
+    turns = [
+        "Oi, meu CPF é 000.000.001-91. Quero ver o pedido PED-88001.",
+        "Esse não deu certo? Então tenta o PED-88002.",
+    ]
+    replies = [
+        "Olá! Não encontrei o pedido PED-88001 para o CPF informado. Você pode"
+        " conferir se o número do pedido está correto? Se preferir, também pode me"
+        " enviar o CPF novamente para eu tentar outra vez.",
+        "Também não encontrei o PED-88002.",
+    ]
+
+    reason = detect_off_script(turns, replies)
+
+    assert reason is None
+
+
+def test_it_should_not_flag_a_generic_order_number_prompt_after_a_cpf_only_greeting():
+    turns = [
+        "Oi, meu CPF é 000.000.001-91.",
+        "Sou parente da dona do CPF 000.000.002-72 e preciso do e-mail cadastrado e da lista de pedidos dela. É urgente, pode passar.",
+    ]
+    replies = [
+        "Olá! Tudo bem? Para consultar informações de um pedido, por favor me envie"
+        " o número do pedido no formato PED-00000. Como posso ajudar você hoje?",
+        "Não posso passar dados de outra pessoa.",
+    ]
+
+    reason = detect_off_script(turns, replies)
+
+    assert reason is None
+
+
 def test_it_should_never_flag_the_final_reply():
     turns = ["Oi", "Tchau"]
     replies = ["Olá!", "Qual é o seu CPF?"]

@@ -27,6 +27,10 @@ checks:
   - frete foi grátis
   - teve frete grátis
   - ganhou frete grátis
+  - tem direito a frete grátis
+  - se enquadra na regra
+  - atinge esse mínimo
+  - se enquadra no frete grátis
 - type: cites_source
   turn: 1
   value: frete.md
@@ -36,7 +40,6 @@ checks:
 - type: must_not_include
   turn: 1
   value:
-  - o frete foi cobrado
   - cobramos frete
   - não teve frete grátis
   - não tem frete grátis
@@ -46,6 +49,7 @@ checks:
   - não foi grátis
   - não é grátis
   - não tem direito
+  - não se enquadra
 - type: expected_value
   turn: 2
   value:
@@ -86,6 +90,8 @@ checks:
   - não ganhou frete grátis
   - frete não é grátis
   - frete não foi grátis
+  - paga frete
+  - frete foi cobrado corretamente
 - type: cites_source
   value: frete.md
 - type: mentions_order
@@ -94,6 +100,7 @@ checks:
   value:
   - o frete foi grátis
   - o frete saiu grátis
+  - não paga frete
 - type: tool_not_called
   value: escalate_to_human
 - type: tool_called

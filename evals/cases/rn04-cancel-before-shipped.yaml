@@ -15,6 +15,9 @@ checks:
   - o cancelamento é permitido
   - ainda pode ser cancelado
   - o pedido pode ser cancelado
+  - pode ser cancelado
+  - permite cancelar
+  - permite o cancelamento
 - type: cites_source
   value: cancelamento.md
 - type: mentions_order
@@ -24,5 +27,8 @@ checks:
   - não pode ser cancelado
   - não pode mais ser cancelado
   - fluxo de devolução
+  - não permite cancelar
+  - não permite o cancelamento
+  - não é possível cancelar
 - type: tool_called
   value: get_order
