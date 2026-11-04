@@ -294,7 +294,7 @@ def test_it_should_record_the_turn_input_as_a_json_list_of_one_user_message(tmp_
 
     (root,) = roots(spans)
     assert json.loads(attribute(root, "gen_ai.input.messages")) == [
-        {"role": "user", "content": "Quero ajuda"}
+        {"role": "user", "parts": [{"type": "text", "content": "Quero ajuda"}]}
     ]
 
 
@@ -305,7 +305,11 @@ def test_it_should_record_the_turn_output_as_a_json_list_of_one_assistant_messag
 
     (root,) = roots(spans)
     assert json.loads(attribute(root, "gen_ai.output.messages")) == [
-        {"role": "assistant", "content": "Olá, tudo bem!"}
+        {
+            "role": "assistant",
+            "parts": [{"type": "text", "content": "Olá, tudo bem!"}],
+            "finish_reason": "stop",
+        }
     ]
 
 
@@ -313,7 +317,9 @@ def test_it_should_keep_the_input_messages_valid_json_with_the_pii_masked(tmp_pa
     spans = run_turns(tmp_path, ScriptedGateway(["Certo."]), f'Oi, "{PII_TEXT}"\n')
 
     (root,) = roots(spans)
-    content = json.loads(attribute(root, "gen_ai.input.messages"))[0]["content"]
+    content = json.loads(attribute(root, "gen_ai.input.messages"))[0]["parts"][0][
+        "content"
+    ]
     assert [pii for pii in RAW_PII if pii in content] == []
 
 
@@ -321,7 +327,9 @@ def test_it_should_keep_the_output_messages_valid_json_with_the_pii_masked(tmp_p
     spans = run_turns(tmp_path, ScriptedGateway([f'Anotei "{PII_TEXT}"\n']), "Oi")
 
     (root,) = roots(spans)
-    content = json.loads(attribute(root, "gen_ai.output.messages"))[0]["content"]
+    content = json.loads(attribute(root, "gen_ai.output.messages"))[0]["parts"][0][
+        "content"
+    ]
     assert [pii for pii in RAW_PII if pii in content] == []
 
 
@@ -335,6 +343,17 @@ def test_it_should_put_the_input_and_output_messages_only_on_the_root_span(tmp_p
         or attribute(span, "gen_ai.output.messages") is not None
     ]
     assert carriers == roots(spans)
+
+
+# service name
+
+
+def test_it_should_name_the_service_pet_helper_on_every_span(tmp_path):
+    spans = run_turns(tmp_path, ScriptedGateway(["Certo."]), "Quero ajuda")
+
+    assert {span.resource.attributes["service.name"] for span in spans} == {
+        "pet-helper"
+    }
 
 
 # session and turn as LangSmith metadata

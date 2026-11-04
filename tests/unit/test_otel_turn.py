@@ -363,4 +363,4 @@ def test_it_should_mask_the_input_message_of_the_span_file_once(tmp_path):
     root = _root_line(tmp_path, f"meu código {PLANTED_WORD} aqui", masking=mark)
 
     (message,) = json.loads(root["attributes"]["gen_ai.input.messages"])
-    assert message["content"] == f"meu código [{PLANTED_WORD}-MASKED] aqui"
+    assert message["parts"][0]["content"] == f"meu código [{PLANTED_WORD}-MASKED] aqui"

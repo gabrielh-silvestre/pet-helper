@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import langsmith
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
@@ -77,7 +78,9 @@ class Tracer:
         self._mask = mask
         self._with_content = os.environ.get(CONTENT_ENV) != "0"
         self._lock = threading.Lock()
-        self._provider = TracerProvider()
+        self._provider = TracerProvider(
+            resource=Resource.create({"service.name": "pet-helper"})
+        )
         self._provider.add_span_processor(SessionTagProcessor())
         # synchronous: the metrics and the round read the span file right after the turn
         self._provider.add_span_processor(
@@ -168,14 +171,22 @@ def _attribute_value(value: Any) -> Any:
     return json.dumps(value, default=str, ensure_ascii=False)
 
 
+def _genai_message(role: str, text: str) -> dict[str, Any]:
+    message: dict[str, Any] = {
+        "role": role,
+        "parts": [{"type": "text", "content": text}],
+    }
+    if role == "assistant":
+        message["finish_reason"] = "stop"
+    return message
+
+
 def _record_on_span(span: Span, kind: str, fields: dict[str, Any]) -> None:
     if kind in _SPAN_KINDS:
         return
     if kind in _ROOT_MESSAGE_ROLES:
         key, role = _ROOT_MESSAGE_ROLES[kind]
-        message = json.dumps(
-            [{"role": role, "content": fields[key]}], ensure_ascii=False
-        )
+        message = json.dumps([_genai_message(role, fields[key])], ensure_ascii=False)
         span.set_attributes(
             {name: _attribute_value(v) for name, v in {**fields, key: message}.items()}
         )
