@@ -1,4 +1,5 @@
 import functools
+import json
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -14,12 +15,26 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages.ai import UsageMetadata, add_usage
 from langchain_core.outputs import ChatGenerationChunk, LLMResult
 
+from pet_helper.trace import otel
 from pet_helper.trace.cost import UnknownPriceError, cost_usd
 from pet_helper.trace.tracer import emit
 
 logger = logging.getLogger(__name__)
 
 _FALLBACK_ACTIVE: ContextVar[bool] = ContextVar("fallback_active", default=False)
+# the fields of a model call that also go on the OpenLLMetry span of that call
+_MODEL_SPAN_FIELDS = (
+    "gen_ai.provider.name",
+    "gen_ai.request.model",
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens",
+    "gen_ai.usage.cache_read.input_tokens",
+    "gen_ai.usage.cache_creation.input_tokens",
+    "pet_helper.fallback",
+    "pet_helper.streaming",
+    "pet_helper.cost_usd",
+    "pet_helper.price_unknown",
+)
 
 
 class BudgetExceeded(Exception):
@@ -79,6 +94,23 @@ def _call_hook(hook: Callable[..., None] | None, *args: Any) -> None:
         logger.exception("Trace callback hook failed")
 
 
+def _annotate_span(run_id: UUID, attributes: dict[str, Any]) -> None:
+    span = otel.run_span(run_id)
+    if span is None:
+        # also the normal case when no Tracer installed the instrumentation
+        return
+    if not span.is_recording():
+        logger.warning("The OpenLLMetry span of run %s already ended", run_id)
+        return
+    span.set_attributes(attributes)
+
+
+def _as_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str, ensure_ascii=False)
+
+
 def _span_ids(run_id: UUID, parent_run_id: UUID | None) -> dict[str, str | None]:
     return {
         "span_id": str(run_id),
@@ -88,6 +120,8 @@ def _span_ids(run_id: UUID, parent_run_id: UUID | None) -> dict[str, str | None]
 
 class TraceCallbackHandler(BaseCallbackHandler):
     raise_error = True
+    # the OpenLLMetry handler runs after this one and ends the span: this one has to run in order
+    run_inline = True
 
     def __init__(
         self,
@@ -150,6 +184,13 @@ class TraceCallbackHandler(BaseCallbackHandler):
             run.usage = add_usage(run.usage, message.usage_metadata)
         if run.first_chunk is None and message.text:
             run.first_chunk = time.perf_counter() - run.started
+            _annotate_span(
+                run_id,
+                {
+                    "gen_ai.server.time_to_first_token": run.first_chunk,
+                    "langsmith.metadata.ttft": run.first_chunk,
+                },
+            )
 
     @_isolated
     def on_llm_end(
@@ -175,11 +216,14 @@ class TraceCallbackHandler(BaseCallbackHandler):
                 cost = cost_usd(run.provider, run.model, usage, strict=self._strict)
             except UnknownPriceError as error:
                 unknown_price = error
+        failure: Exception | None = unknown_price
         try:
             if cost is None:
                 _call_hook(self._on_error, None)
             else:
                 _call_hook(self._on_cost, cost)
+        except BudgetExceeded as error:
+            failure = error
         finally:
             self._emit_model_call(
                 run,
@@ -192,8 +236,10 @@ class TraceCallbackHandler(BaseCallbackHandler):
                 finish_reason=metadata.get("stop_reason")
                 or metadata.get("done_reason"),
             )
-        if unknown_price is not None:
-            raise unknown_price
+        if failure is not None:
+            # raising skips the OpenLLMetry handler, so its span would stay open
+            otel.fail_run(run_id, failure)
+            raise failure
 
     @_isolated
     def on_llm_error(
@@ -207,8 +253,11 @@ class TraceCallbackHandler(BaseCallbackHandler):
         run = self._model_runs.pop(run_id, None)
         if run is None:
             return
+        failure: BudgetExceeded | None = None
         try:
             _call_hook(self._on_error, run.usage)
+        except BudgetExceeded as exceeded:
+            failure = exceeded
         finally:
             cost = cost_usd(run.provider, run.model, run.usage) if run.usage else None
             self._emit_model_call(
@@ -220,6 +269,9 @@ class TraceCallbackHandler(BaseCallbackHandler):
                 price_unknown=bool(run.usage) and cost is None,
                 error_type=type(error).__name__,
             )
+        if failure is not None:
+            otel.fail_run(run_id, failure)
+            raise failure
 
     def _emit_model_call(
         self,
@@ -254,6 +306,15 @@ class TraceCallbackHandler(BaseCallbackHandler):
         }
         if error_type is not None:
             fields["error.type"] = error_type
+        attributes = {
+            name: fields[name]
+            for name in _MODEL_SPAN_FIELDS
+            if fields[name] is not None
+        }
+        attributes[otel.SPAN_KIND_KEY] = "llm"
+        if cost is not None:
+            attributes["langsmith.metadata.cost_usd"] = float(cost)
+        _annotate_span(run_id, attributes)
         emit("model.call", **fields)
 
     @_isolated
@@ -281,7 +342,9 @@ class TraceCallbackHandler(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        self._emit_tool_call(run_id, parent_run_id, "ok")
+        self._emit_tool_call(
+            run_id, parent_run_id, "ok", result=getattr(output, "content", output)
+        )
 
     @_isolated
     def on_tool_error(
@@ -300,10 +363,21 @@ class TraceCallbackHandler(BaseCallbackHandler):
         parent_run_id: UUID | None,
         status: str,
         error_message: str | None = None,
+        result: Any = None,
     ) -> None:
         run = self._tool_runs.pop(run_id, None)
         if run is None:
             return
+        span_attributes = {
+            "gen_ai.tool.call.arguments": _as_text(run.arguments),
+            "pet_helper.status": status,
+            otel.SPAN_KIND_KEY: "tool",
+        }
+        if result is not None:
+            span_attributes["gen_ai.tool.call.result"] = _as_text(result)
+        if error_message is not None:
+            span_attributes["error.message"] = error_message
+        _annotate_span(run_id, span_attributes)
         fields: dict[str, Any] = {
             **_span_ids(run_id, parent_run_id),
             "gen_ai.tool.name": run.name,

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from pet_helper.catalog import Catalog
-from pet_helper.conversation import DEFAULT_KIT_DIR, KitError
+from pet_helper.conversation import DEFAULT_KIT_DIR, KitError, system_prompt_sha256
 from pet_helper.evals import (
     EvalCase,
     ask_confirmation,
@@ -98,6 +98,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--judge", choices=["sync", "batch", "none"], default="sync")
     parser.add_argument("--held-out", action="store_true")
     parser.add_argument("--runs", type=_positive_int, default=DEFAULT_RUNS)
+    parser.add_argument("--system-prompt-file", type=Path)
     saved = parser.add_mutually_exclusive_group()
     saved.add_argument("--collect", metavar="ROUND")
     saved.add_argument("--rejudge", metavar="ROUND")
@@ -168,7 +169,7 @@ def _reference_round(root: Path, case_id: str) -> str | None:
 
 
 def _decisive_reference(
-    args: argparse.Namespace, root: Path, case_id: str
+    args: argparse.Namespace, root: Path, case_id: str, system_prompt: str | None
 ) -> tuple[str | None, bool]:
     """The round a decisive rerun decides against, and whether such a round was found."""
     if args.case is None or args.runs <= _DECISIVE_ABOVE_RUNS:
@@ -182,7 +183,26 @@ def _decisive_reference(
         return None, False
     if not args.held_out:
         print(f"Decisive rerun against round {reference}")
+    info = json.loads((root / reference / "round.json").read_text(encoding="utf-8"))
+    recorded = info.get("assistant_prompt_sha256")
+    if recorded and recorded != system_prompt_sha256(system_prompt):
+        print(
+            "Warning: the reference round used another assistant prompt than this rerun",
+            file=sys.stderr,
+        )
     return reference, True
+
+
+def _read_prompt_file(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"{path}: {exc.strerror}") from exc
+    if not text.strip():
+        raise ValueError(f"{path}: the prompt file is empty")
+    return text
 
 
 def _new_round(
@@ -190,6 +210,11 @@ def _new_round(
 ) -> int:
     from pet_helper.evals import run_round
 
+    try:
+        system_prompt = _read_prompt_file(args.system_prompt_file)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     selection = [
         case
         for case in load_cases(cases_dir)
@@ -211,7 +236,9 @@ def _new_round(
         if smoke and not held_out
         else root
     )
-    reference, reachable = _decisive_reference(args, root, selection[0].id)
+    reference, reachable = _decisive_reference(
+        args, root, selection[0].id, system_prompt
+    )
     if not reachable:
         return 1
     result = run_round(
@@ -232,6 +259,7 @@ def _new_round(
         clock=env.clock,
         batch_wait_seconds=env.batch_wait_seconds,
         batch_poll_seconds=env.batch_poll_seconds,
+        system_prompt=system_prompt,
     )
     if result.aborted or result.round_id is None:
         return 1

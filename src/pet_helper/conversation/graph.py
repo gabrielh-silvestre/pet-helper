@@ -180,6 +180,7 @@ def build_graph(
     guard: Guard,
     tools: Sequence[Any] = (),
     checkpointer: BaseCheckpointSaver | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> CompiledStateGraph:
     def input_guard_node(state: ConversationState) -> dict[str, Any]:
         verdict = guard.inspect_input(state.get("user_text", ""))
@@ -207,7 +208,7 @@ def build_graph(
         try:
             # o histórico segue sem reescrita, para o prefixo ficar estável entre chamadas
             result = gateway.complete(
-                [SystemMessage(SYSTEM_PROMPT), *state.get("messages", ())], tools
+                [SystemMessage(system_prompt), *state.get("messages", ())], tools
             )
         except ModelUnavailable:
             return _repeated_failure("model_unavailable")

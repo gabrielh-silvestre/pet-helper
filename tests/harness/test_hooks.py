@@ -521,6 +521,20 @@ PAID_BLOCKED = _ids(
     ("eval-from-the-venv", _bash(".venv/bin/pet-helper eval")),
     ("eval-inside-sh-c", _bash("sh -c 'pet-helper eval'")),
     ("judge-smoke", _bash("uv run python -m pet_helper.evals.judge smoke")),
+    ("optimize-judge", _bash("uv run pet-helper optimize judge evals/results/r1")),
+    ("optimize-assistant", _bash("uv run pet-helper optimize assistant")),
+    ("optimize-fed-by-yes", _bash("yes | uv run pet-helper optimize judge r1")),
+    ("optimize-from-the-venv", _bash(".venv/bin/pet-helper optimize judge r1")),
+    ("optimize-inside-sh-c", _bash("sh -c 'pet-helper optimize judge r1'")),
+    ("optimize-double-quoted", _bash('sh -c "pet-helper optimize"')),
+    (
+        "optimize-module-judge",
+        _bash("uv run python -m pet_helper.optimize judge evals/results/r1"),
+    ),
+    (
+        "optimize-module-assistant",
+        _bash("uv run python -m pet_helper.optimize assistant"),
+    ),
     (
         "labels-judge-pool",
         _bash("uv run python -m pet_helper.evals.labels judge-pool r1 --split dev"),
@@ -570,6 +584,12 @@ PAID_ALLOWED = _ids(
     ),
     ("labels-pool", _bash("uv run python -m pet_helper.evals.labels pool r1")),
     ("grep-the-word-judge", _bash("grep -n judge src/pet_helper/evals/judge.py")),
+    ("grep-the-word-optimize", _bash("grep -rn optimize src/pet_helper/")),
+    ("sync-the-optimize-extra", _bash("uv sync --extra optimize")),
+    (
+        "pytest-the-optimize-tests",
+        _bash("uv run pytest tests/unit/test_optimize_judge.py -q"),
+    ),
     ("chat", _bash("uv run pet-helper chat")),
     ("metrics", _bash("uv run pet-helper metrics traces/")),
     (
@@ -608,3 +628,9 @@ def test_it_should_tell_the_agent_that_the_owner_runs_paid_commands_in_their_own
 @pytest.mark.parametrize("payload", PAID_ALLOWED)
 def test_it_should_not_block_free_commands_that_share_a_paid_module_or_word(payload):
     assert _run_paid(payload).returncode == 0
+
+
+def test_it_should_name_the_optimize_commands_among_the_paid_ones():
+    result = _run_paid(_bash("uv run pet-helper optimize judge r1"))
+
+    assert "optimize" in result.stderr

@@ -73,6 +73,10 @@ class RoundBudget:
         self._reserves = _ThreadReserves()
         self._lock = threading.Lock()
 
+    @property
+    def spent(self) -> Decimal:
+        return self._spent
+
     def before_call(self, reserve: Decimal) -> None:
         if self.halted:
             raise BudgetExceeded("A call ended without usage, the round stopped")

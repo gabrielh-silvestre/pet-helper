@@ -1628,3 +1628,15 @@ def test_it_should_seed_from_the_command_line_without_an_api_key(round_dir):
         0,
         True,
     ), done.stderr
+
+
+# the estimate of a judge-pool run, shared with `pet-helper optimize judge`
+
+
+def test_it_should_estimate_a_sync_judge_pool_run_from_the_per_call_figures():
+    typical, worst = labels_module.estimate_judge_calls(8)
+
+    assert (typical, worst) == (
+        labels_module.JUDGE_CALL_ESTIMATE_USD * 8,
+        labels_module.JUDGE_CALL_RESERVE_USD * 8,
+    )

@@ -130,7 +130,7 @@ def _read_pool(labels: Path) -> list[dict[str, Any]]:
     return pool
 
 
-def _read_key(labels: Path) -> dict[str, dict[str, Any]]:
+def read_key(labels: Path) -> dict[str, dict[str, Any]]:
     return json.loads((labels / "key.json").read_text(encoding="utf-8"))
 
 
@@ -419,6 +419,16 @@ def _judge_batch(
     return verdicts, cost, stop
 
 
+def estimate_judge_calls(count: int, mode: str = "sync") -> tuple[Decimal, Decimal]:
+    """The typical and the worst-case cost of judging `count` items."""
+    if mode == "sync":
+        return JUDGE_CALL_ESTIMATE_USD * count, JUDGE_CALL_RESERVE_USD * count
+    return (
+        JUDGE_CALL_ESTIMATE_USD * count * BATCH_PRICE_FACTOR,
+        batch_reserve_usd(count, JUDGE_MAX_TOKENS),
+    )
+
+
 def _judge_pool(
     directory: Path,
     split: str,
@@ -432,7 +442,7 @@ def _judge_pool(
     timeout_seconds: float,
 ) -> int:
     labels = _labels(directory)
-    key = _read_key(labels)
+    key = read_key(labels)
     items = [i for i in _read_pool(labels) if key[i["id"]]["split"] == split]
     if not items:
         raise _Refused(f"the pool has no item in the {split} split")
@@ -445,11 +455,7 @@ def _judge_pool(
         raise _Refused(f"{API_KEY_ENV} is required for the paid judge calls")
 
     count = len(items)
-    if mode == "sync":
-        typical, worst = JUDGE_CALL_ESTIMATE_USD * count, JUDGE_CALL_RESERVE_USD * count
-    else:
-        typical = JUDGE_CALL_ESTIMATE_USD * count * BATCH_PRICE_FACTOR
-        worst = batch_reserve_usd(count, JUDGE_MAX_TOKENS)
+    typical, worst = estimate_judge_calls(count, mode)
     print(
         f"Estimate for {count} items ({mode}): US$ {typical:.4f} typical, "
         f"US$ {worst:.4f} worst case, cap US$ {cap_usd}"
@@ -579,7 +585,7 @@ def _criterion_lines(
 def _tpr_tnr(directory: Path, split: str) -> None:
     labels = _labels(directory)
     floor = _floor(labels, required=split == "test")
-    key = _read_key(labels)
+    key = read_key(labels)
     slices = {item["id"]: item["slice"] for item in _read_pool(labels)}
     human = {row["id"]: row["label"] for row in _read_jsonl(labels / "human.jsonl")}
     in_split = {i: entry for i, entry in key.items() if entry["split"] == split}

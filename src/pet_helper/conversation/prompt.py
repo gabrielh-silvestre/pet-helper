@@ -31,5 +31,7 @@ normalmente.
 """
 
 
-def system_prompt_sha256() -> str:
-    return hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+def system_prompt_sha256(prompt: str | None = None) -> str:
+    return hashlib.sha256(
+        (SYSTEM_PROMPT if prompt is None else prompt).encode()
+    ).hexdigest()

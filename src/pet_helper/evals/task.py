@@ -27,7 +27,12 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from pet_helper.catalog import Catalog
-from pet_helper.conversation import ToolRegistry, build_assistant, build_kit_registry
+from pet_helper.conversation import (
+    Reply,
+    ToolRegistry,
+    build_assistant,
+    build_kit_registry,
+)
 from pet_helper.evals.budget import ASSISTANT_CALL_RESERVE_USD, RoundBudget
 from pet_helper.evals.cases import PUBLIC_STATE_KEYS, EvalCase, to_sample_kwargs
 from pet_helper.evals.checks import (
@@ -81,6 +86,7 @@ class _Conductor:
     tracer: Tracer
     gateway_factory: GatewayFactory
     handler_factory: Callable[[], TraceCallbackHandler]
+    system_prompt: str | None = None
     registries: dict[tuple[str | None, date], ToolRegistry] = field(
         default_factory=dict
     )
@@ -104,6 +110,7 @@ class _Conductor:
                     today=case.today,
                     tracer=self.tracer,
                     handler_factory=self.handler_factory,
+                    system_prompt=self.system_prompt,
                 )
             replies = []
             policy_titles = []
@@ -118,17 +125,7 @@ class _Conductor:
         # the graph turns an unavailable model into a handoff, which is not a result
         if snapshot.get("escalation_cause") == "model_unavailable":
             raise ModelUnavailable(f"{session_id}: the model was unavailable")
-        record = RunRecord(
-            replies=replies,
-            tool_calls=tuple(
-                ToolCall(call["name"], call["args"])
-                for message in snapshot["messages"]
-                if isinstance(message, AIMessage)
-                for call in message.tool_calls
-            ),
-            retrieved=tuple(snapshot.get("retrieved", ())),
-            state={key: snapshot.get(key) for key in PUBLIC_STATE_KEYS},
-        )
+        record = run_record(replies, snapshot)
         return _Conversation(
             record,
             known_skus,
@@ -182,6 +179,20 @@ class _Conductor:
             ],
             escalation=record.replies[-1].escalation,
         )
+
+
+def run_record(replies: Sequence[Reply], snapshot: Mapping[str, Any]) -> RunRecord:
+    return RunRecord(
+        replies=replies,
+        tool_calls=tuple(
+            ToolCall(call["name"], call["args"])
+            for message in snapshot["messages"]
+            if isinstance(message, AIMessage)
+            for call in message.tool_calls
+        ),
+        retrieved=tuple(snapshot.get("retrieved", ())),
+        state={key: snapshot.get(key) for key in PUBLIC_STATE_KEYS},
+    )
 
 
 def _policy_titles(messages: Sequence[BaseMessage]) -> tuple[str, ...]:
@@ -254,12 +265,14 @@ def eval_task(
     judge_client: JudgeClient | None = None,
     budget: RoundBudget,
     epoch_offset: int = 0,
+    tracer: Tracer | None = None,
+    system_prompt: str | None = None,
 ) -> Task:
     guard = Guard(Catalog(kit_dir / "catalog.csv"))
     conductor = _Conductor(
         kit_dir=kit_dir,
         guard=guard,
-        tracer=Tracer(round_dir / "traces", mask=guard.mask),
+        tracer=tracer or Tracer(round_dir / "traces", mask=guard.mask),
         gateway_factory=gateway_factory,
         handler_factory=partial(
             TraceCallbackHandler,
@@ -269,6 +282,7 @@ def eval_task(
             on_error=budget.on_error,
             strict=True,
         ),
+        system_prompt=system_prompt,
     )
     cases_by_id = {case.id: case for case in cases}
     # the raw turns and replies stay here: the log only gets the masked copy

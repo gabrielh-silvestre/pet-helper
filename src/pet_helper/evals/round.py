@@ -18,6 +18,7 @@ from inspect_ai.log import EvalSample, read_eval_log
 from inspect_ai.model import ChatMessage
 from langchain_core.messages.ai import UsageMetadata
 
+from pet_helper.catalog import Catalog
 from pet_helper.conversation import DEFAULT_KIT_DIR, system_prompt_sha256
 from pet_helper.evals import judge as judge_module
 from pet_helper.evals.budget import (
@@ -62,8 +63,15 @@ from pet_helper.gateway import (
     resolve_anthropic_model,
     resolve_ollama_model,
 )
+from pet_helper.guard import Guard
 from pet_helper.orders import FAILURE_ENV
-from pet_helper.trace import CONTENT_ENV, UnknownPriceError, find_raw_pii, read_jsonl
+from pet_helper.trace import (
+    CONTENT_ENV,
+    Tracer,
+    UnknownPriceError,
+    find_raw_pii,
+    read_jsonl,
+)
 
 KIT_DIR = Path(DEFAULT_KIT_DIR)
 DEFAULT_RUNS = 3
@@ -719,6 +727,7 @@ def run_round(
     round_id: str | None = None,
     batch_wait_seconds: float = 0.0,
     batch_poll_seconds: float = 0.0,
+    system_prompt: str | None = None,
 ) -> RoundResult:
     if reference_round is not None and len(selection) != 1:
         raise ValueError("A decisive rerun takes exactly one case")
@@ -762,6 +771,9 @@ def run_round(
         made = 0
         count = runs
         while True:
+            tracer = Tracer(
+                directory / "traces", mask=Guard(Catalog(kit_dir / "catalog.csv")).mask
+            )
             task = eval_task(
                 selection,
                 round_dir=directory,
@@ -772,8 +784,13 @@ def run_round(
                 judge_client=inline_judge,
                 budget=budget,
                 epoch_offset=made,
+                tracer=tracer,
+                system_prompt=system_prompt,
             )
-            run_eval(task, round_dir=directory, max_samples=max_samples)
+            try:
+                run_eval(task, round_dir=directory, max_samples=max_samples)
+            finally:
+                tracer.shutdown()
             made += count
             if reference_round is None:
                 break
@@ -819,7 +836,7 @@ def run_round(
             ),
             "judge": judge_model,
         },
-        "assistant_prompt_sha256": system_prompt_sha256(),
+        "assistant_prompt_sha256": system_prompt_sha256(system_prompt),
         "started_at": started.isoformat(),
         "finished_at": clock().isoformat(),
         "runs": runs,
